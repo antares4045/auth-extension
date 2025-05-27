@@ -1,4 +1,7 @@
-const currentLocation = window.location
+function onFinish() {
+    // pass
+}
+
 // Ждём полной загрузки DOM
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -8,7 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     console.log("currentOrigin: ", currentOrigin)
     
-    if (!config || !activeInstances.includes(currentOrigin)) return;
+    if (!config || !activeInstances.includes(currentOrigin)) return onFinish();;
     
     try {
         switch (config.authMethod) {
@@ -20,6 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (error) {
         console.error(`[Auth Injector] Ошибка для ${currentOrigin}:`, error);
     }
+    onFinish();
     });
 
 
@@ -113,12 +117,4 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // // JWT авторизация
-    // async function getJWTToken({ login, password, loginEndpoint = '/auth/login' }) {
-    // const response = await fetch(loginEndpoint, {
-    //     method: 'POST',
-    //     body: JSON.stringify({ username: login, password })
-    // });
-    // return response.json().then(data => data.access_token);
-    // }
 })

@@ -1,9 +1,37 @@
-function onFinish() {
-    // pass
+function onFinish(state) {
+    switch(state){
+        case '':
+            chrome.runtime.sendMessage({
+                action: 'set-badge',
+                text: '',
+                color: '#999999'
+            });
+            break;
+        case 'ok':
+            chrome.runtime.sendMessage({
+                action: 'set-badge',
+                text: '✓'
+            });
+            break;
+        case 'active':
+            chrome.runtime.sendMessage({
+                action: 'set-badge',
+                text: '⯈'
+            });
+            break;
+        case 'fail':
+            chrome.runtime.sendMessage({
+                action: 'set-badge',
+                text: '✖',
+                color: '#ff0000'
+            });
+
+            
+    }
 }
 
 // Ждём полной загрузки DOM
-document.addEventListener('DOMContentLoaded', () => {
+ function tryLogin(){
 
     chrome.storage.sync.get(['instances', 'activeInstances'], async ({ instances = {}, activeInstances = [] }) => {
     const currentOrigin = window.location.origin;
@@ -11,19 +39,20 @@ document.addEventListener('DOMContentLoaded', () => {
     
     console.log("currentOrigin: ", currentOrigin)
     
-    if (!config || !activeInstances.includes(currentOrigin)) return onFinish();;
-    
+    if (!config || !activeInstances.includes(currentOrigin)) return onFinish('');;
+    let state;
     try {
         switch (config.authMethod) {
         case 'aes-ecb':
-            token = await getAESToken(config);
+            state = await getAESToken(config);
             break;
         }
         
     } catch (error) {
         console.error(`[Auth Injector] Ошибка для ${currentOrigin}:`, error);
+        state = "fail";
     }
-    onFinish();
+    onFinish(state);
     });
 
 
@@ -35,8 +64,21 @@ document.addEventListener('DOMContentLoaded', () => {
         
         let token;
         const tokenKey = "token";
-        const apiUrl = host+endpoint;
 
+        const localStorageIP = localStorage.getItem("IP")
+
+        const apiUrl = localStorageIP || host+endpoint;
+        if(localStorageIP){
+            chrome.runtime.sendMessage({
+                action: 'set-badge',
+                color: '#ffd700'
+            });
+        }else{
+            chrome.runtime.sendMessage({
+                action: 'set-badge',
+                color: '#28a745'
+            });
+        }
 
         const requestToBridge =  (command, params=null) => {
             const myHeaders = new Headers();
@@ -63,7 +105,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if((await requestToBridge("CMS.USER.GET_SETTINGS")).status == 200)
                 {
                     console.log("и без нашей помощи залогинены")
-                    return;
+                    return 'ok';
                 }
             }catch (error){
                 //pass
@@ -115,6 +157,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
         }
+        return 'active'
     }
 
-})
+}
+
+
+document.addEventListener('DOMContentLoaded', tryLogin)

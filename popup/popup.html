@@ -3,24 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <title>Auth Injector</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" type="text/css" href="styles.css">
 </head>
 <body>
-    <div style="width: 250px;">
-        <div class="tab-bar">
-            <button class="tab-button active" data-tab="instances">Настройки</button>
-            <button class="tab-button" data-tab="report" id="reportTabBtn" style="display: none;">Управление</button>
+    <div class="tab-bar material-popup">
+        <!-- Вкладки Material -->
+        <div class="material-tabs">
+            <button class="tab-button material-tab active" data-tab="instances">Настройки</button>
+            <button class="tab-button material-tab" data-tab="report" id="reportTabBtn" style="display: none;">Управление</button>
         </div>
-        <div id="instances-tab" class="tab-content active">
-            <div>Автологин для:</div>
-            <div id="instances-list"></div>
-            <button id="add-instance">+ Добавить инстанс</button>
+
+        <!-- Содержимое вкладки "Настройки" -->
+        <div id="instances-tab" class="tab-content material-tab-pane active">
+            <div class="material-subtitle">Автологин для:</div>
+            <div id="instances-list" class="material-list"></div>
+            <button id="add-instance" class="material-button material-button-primary">+ Добавить инстанс</button>
         </div>
-        <div id="report-tab" class="tab-content">
-            <div>Переключение фд:</div>
-            <div id="toggle-control">
-                <div>| <span id="current-state">Загрузка...</span></div>
-                <button id="toggle-state-btn">Переключить</button>
+
+        <!-- Содержимое вкладки "Управление" -->
+        <div id="report-tab" class="tab-content material-tab-pane">
+            <div class="material-subtitle">Переключение настройки</div>
+            <div class="material-card">
+                <div class="material-state-row">
+                    <span class="material-label">Текущее состояние:</span>
+                    <span id="current-state" class="material-state-badge">Загрузка...</span>
+                </div>
+                <button id="toggle-state-btn" class="material-button material-button-secondary" disabled>Переключить</button>
             </div>
         </div>
     </div>

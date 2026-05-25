@@ -5,15 +5,36 @@ chrome.storage.sync.get(['instances', 'activeInstances'], ({ instances = {}, act
   // Отображение списка инстансов
   Object.entries(instances).forEach(([url, config]) => {
     const div = document.createElement('div');
-    div.className = 'instance-item';
+    div.className = 'instance-item material-list-item';
+    
+    const instanceName = document.createElement('span');
+    instanceName.className = "material-instance-name";
+    instanceName.appendChild(document.createTextNode(url));
+
+    const materialSwitch = document.createElement('label');
+    materialSwitch.className = "material-switch";
     
     const checkbox = document.createElement('input');
+    const slider = document.createElement('span');
+    slider.className = "material-slider";
+
     checkbox.type = 'checkbox';
     checkbox.checked = activeInstances.includes(url);
     checkbox.addEventListener('change', () => toggleInstance(url, checkbox.checked));
+
+    materialSwitch.appendChild(checkbox);
+    materialSwitch.appendChild(slider);
+    div.appendChild(instanceName);
+    div.appendChild(materialSwitch);
+
+    // const checkbox = document.createElement('input');
+    // checkbox.type = 'checkbox';
+    // checkbox.className = "material-slider";
+    // checkbox.checked = activeInstances.includes(url);
+    // checkbox.addEventListener('change', () => toggleInstance(url, checkbox.checked));
     
-    div.appendChild(checkbox);
-    div.appendChild(document.createTextNode(url));
+    // div.appendChild(checkbox);
+    // div.appendChild(document.createTextNode(url));
     list.appendChild(div);
   });
   

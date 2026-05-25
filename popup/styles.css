@@ -1,23 +1,254 @@
-.tab-bar {
-    display: flex;
-    border-bottom: 1px solid #ccc;
-    margin-bottom: 10px;
+/* Основные переменные Material Design */
+:root {
+    --primary-color: #6200ee;
+    --primary-variant: #3700b3;
+    --secondary-color: #03dac6;
+    --background: #ffffff;
+    --surface: #fefefe;
+    --error: #b00020;
+    --on-primary: #ffffff;
+    --on-secondary: #000000;
+    --on-background: #000000;
+    --on-surface: #000000;
+    --border-radius: 8px;
+    --shadow: 0 2px 4px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
+    --transition: 0.2s ease-in-out;
 }
-.tab-button {
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    width: 320px;
+    font-family: 'Roboto', sans-serif;
+    background-color: var(--background);
+    color: var(--on-background);
+    font-size: 14px;
+    font-weight: 400;
+}
+
+.material-popup {
+    padding: 16px;
+}
+
+/* Вкладки Material */
+.material-tabs {
+    display: flex;
+    border-bottom: 1px solid rgba(0,0,0,0.12);
+    margin-bottom: 20px;
+}
+
+.material-tab {
     background: none;
     border: none;
-    padding: 8px 12px;
-    cursor: pointer;
+    padding: 8px 16px;
     font-size: 14px;
-    color: #666;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: rgba(0,0,0,0.6);
+    cursor: pointer;
+    transition: var(--transition);
+    position: relative;
 }
-.tab-button.active {
-    color: #007bff;
-    border-bottom: 2px solid #007bff;
+
+.material-tab:hover {
+    color: var(--primary-color);
+    background-color: rgba(98, 0, 238, 0.04);
 }
-.tab-content {
+
+.material-tab.active {
+    color: var(--primary-color);
+}
+
+.material-tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background-color: var(--primary-color);
+}
+
+/* Панели вкладок */
+.material-tab-pane {
     display: none;
 }
-.tab-content.active {
+
+.material-tab-pane.active {
     display: block;
 }
+
+/* Заголовки */
+.material-subtitle {
+    font-size: 14px;
+    font-weight: 500;
+    color: rgba(0,0,0,0.87);
+    margin-bottom: 12px;
+}
+
+/* Список инстансов (как список Material) */
+.material-list {
+    background: var(--surface);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow);
+    margin-bottom: 16px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.material-list-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(0,0,0,0.08);
+    transition: background-color var(--transition);
+}
+
+.material-list-item:last-child {
+    border-bottom: none;
+}
+
+.material-list-item:hover {
+    background-color: rgba(0,0,0,0.02);
+}
+
+.material-instance-name {
+    font-weight: 500;
+    color: rgba(0,0,0,0.87);
+}
+
+.material-switch {
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+}
+
+/* Стилизованный переключатель (checkbox в стиле Material) */
+.material-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+    position: absolute;
+}
+
+.material-slider {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 14px;
+    background-color: rgba(0,0,0,0.38);
+    border-radius: 14px;
+    transition: var(--transition);
+    margin-right: 8px;
+}
+
+.material-slider::before {
+    content: "";
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    left: -3px;
+    top: -3px;
+    background-color: #fafafa;
+    border-radius: 50%;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    transition: transform var(--transition);
+}
+
+.material-switch input:checked + .material-slider {
+    background-color: rgba(98, 0, 238, 0.5);
+}
+
+.material-switch input:checked + .material-slider::before {
+    transform: translateX(22px);
+    background-color: var(--primary-color);
+}
+
+/* Кнопки Material */
+.material-button {
+    font-family: 'Roboto', sans-serif;
+    font-weight: 500;
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 8px 16px;
+    border-radius: 4px;
+    border: none;
+    cursor: pointer;
+    transition: background-color var(--transition), box-shadow var(--transition);
+    background-color: transparent;
+}
+
+.material-button-primary {
+    background-color: var(--primary-color);
+    color: var(--on-primary);
+    box-shadow: var(--shadow);
+}
+
+.material-button-primary:hover {
+    background-color: var(--primary-variant);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+.material-button-primary:active {
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+
+.material-button-secondary {
+    color: var(--primary-color);
+    border: 1px solid var(--primary-color);
+    background-color: transparent;
+}
+
+.material-button-secondary:hover {
+    background-color: rgba(98, 0, 238, 0.04);
+}
+
+.material-button-secondary:disabled {
+    opacity: 0.38;
+    cursor: not-allowed;
+    border-color: rgba(0,0,0,0.38);
+    color: rgba(0,0,0,0.38);
+}
+
+.material-button-secondary:disabled:hover {
+    background-color: transparent;
+}
+
+/* Карточка для состояния настройки */
+.material-card {
+    background-color: var(--surface);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow);
+    padding: 16px;
+    margin-top: 8px;
+}
+
+.material-state-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.material-label {
+    font-weight: 500;
+    color: rgba(0,0,0,0.6);
+}
+
+.material-state-badge {
+    background-color: rgba(3, 218, 198, 0.12);
+    color: #018786;
+    padding: 4px 12px;
+    border-radius: 16px;
+    font-weight: 500;
+    font-size: 12px;
+}
+
+/* Адаптивная ширина для маленьких экранов (уже 320px) */

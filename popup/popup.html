@@ -1,16 +1,29 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
-  <title>Auth Injector</title>
-  <link rel="stylesheet" href="styles.css">
+    <meta charset="UTF-8">
+    <title>Auth Injector</title>
+    <link rel="stylesheet" type="text/css" href="styles.css">
 </head>
 <body>
-  <div class="container">
-    <h3>Автологин для:</h3>
-    <div id="instances-list"></div>
-    <button id="add-instance">+ Добавить инстанс</button>
-  </div>
-  <script src="popup.js"></script>
+    <div style="width: 250px;">
+        <div class="tab-bar">
+            <button class="tab-button active" data-tab="instances">Настройки</button>
+            <button class="tab-button" data-tab="report" id="reportTabBtn" style="display: none;">Управление</button>
+        </div>
+        <div id="instances-tab" class="tab-content active">
+            <div>Автологин для:</div>
+            <div id="instances-list"></div>
+            <button id="add-instance">+ Добавить инстанс</button>
+        </div>
+        <div id="report-tab" class="tab-content">
+            <div>Переключение фд:</div>
+            <div id="toggle-control">
+                <div>| <span id="current-state">Загрузка...</span></div>
+                <button id="toggle-state-btn">Переключить</button>
+            </div>
+        </div>
+    </div>
+    <script src="popup.js"></script>
 </body>
 </html>

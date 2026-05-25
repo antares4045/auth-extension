@@ -30,6 +30,34 @@ function onFinish(state) {
     }
 }
 
+let apiUrl;
+const tokenKey = "token";
+const requestToBridge  =  (command, params=null, useReceives=false) => {
+        const myHeaders = new Headers();
+        myHeaders.append("Content-Type", "application/x-www-form-urlencoded");
+
+        const urlencoded = new URLSearchParams();
+        urlencoded.append("code", command);
+        urlencoded.append("token", localStorage.getItem(tokenKey));
+
+        if(useReceives){
+            urlencoded.append("receiver", sessionStorage.getItem("receiver"));
+            urlencoded.append("streamreceiver", sessionStorage.getItem("streamreceiver"));
+        }
+
+        if(params)
+            urlencoded.append("params", JSON.stringify(params));
+
+        const requestOptions = {
+            method: "POST",
+            headers: myHeaders,
+            body: urlencoded,
+            redirect: "follow"
+        };
+
+        return fetch(apiUrl, requestOptions)
+    }
+
 // Ждём полной загрузки DOM
  function tryLogin(){
 
@@ -63,11 +91,10 @@ function onFinish(state) {
     async function getAESToken({ login, password, endpoint = '/api', host = '' }) {
         
         let token;
-        const tokenKey = "token";
 
         const localStorageIP = localStorage.getItem("IP")
 
-        const apiUrl = localStorageIP || host+endpoint;
+        apiUrl = localStorageIP || host+endpoint;
         if(localStorageIP){
             chrome.runtime.sendMessage({
                 action: 'set-badge',
@@ -78,26 +105,6 @@ function onFinish(state) {
                 action: 'set-badge',
                 color: '#28a745'
             });
-        }
-
-        const requestToBridge =  (command, params=null) => {
-            const myHeaders = new Headers();
-            myHeaders.append("Content-Type", "application/x-www-form-urlencoded");
-
-            const urlencoded = new URLSearchParams();
-            urlencoded.append("code", command);
-            urlencoded.append("token", localStorage.getItem(tokenKey));
-            if(params)
-                urlencoded.append("params", JSON.stringify(params));
-
-            const requestOptions = {
-                method: "POST",
-                headers: myHeaders,
-                body: urlencoded,
-                redirect: "follow"
-            };
-
-            return fetch(apiUrl, requestOptions)
         }
 
         if(localStorage.getItem(tokenKey)){
@@ -162,5 +169,51 @@ function onFinish(state) {
 
 }
 
+
+
+// Добавляем обработчик сообщений от попапа
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'getSetting') {
+        // Асинхронно получаем значение настройки
+        getCurrentSetting(message.params).then(value => {
+            sendResponse({ success: true, value: "текущий ФД: " + value });
+        }).catch(error => {
+            console.error("Ошибка получения настройки:", error);
+            sendResponse({ success: false, error: error.message });
+        });
+        return true; // Сообщаем, что ответ будет отправлен асинхронно
+    }
+    if (message.action === 'toggleSetting') {
+        toggleSetting(message.params).then(newValue => {
+            sendResponse({ success: true, newValue: "установленный ФД: " + newValue });
+        }).catch(error => {
+            console.error("Ошибка переключения настройки:", error);
+            sendResponse({ success: false, error: error.message });
+        });
+        return true;
+    }
+});
+
+// Функция для получения текущего значения настройки
+async function getCurrentSetting(params = null) {
+    // Используем существующую requestToBridge
+    const response = await requestToBridge('REP.GET_REPORT_SETTINGS', params, true);
+    if (!response.ok) throw new Error('Failed to get setting');
+    const data = await response.json();
+    
+    
+    return (data?.settings?.engineVersion || "?");
+}
+
+// Функция для переключения настройки
+async function toggleSetting(params = null) {
+    // Сначала получаем текущее значение
+    const currentValue = await getCurrentSetting(params);
+    const newValue = currentValue == "4" ? "3" : "4";
+    // Отправляем запрос на установку нового значения
+    const updateResponse = await requestToBridge('REP.SET_REPORT_SETTINGS', { ...params, "engineVersion": newValue }, true);
+    if (!updateResponse.ok) throw new Error('Failed to toggle setting');
+    return newValue;
+}
 
 document.addEventListener('DOMContentLoaded', tryLogin)

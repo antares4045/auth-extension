@@ -46,3 +46,111 @@ function addNewInstance() {
     location.reload();  // Обновляем popup
   });
 }
+
+
+
+
+// --- Логика для вкладок (tab) ---
+let currentTab = 'instances';
+
+function showTab(tabId) {
+    document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+    document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+
+    document.getElementById(`${tabId}-tab`).classList.add('active');
+    const activeButton = document.querySelector(`.tab-button[data-tab="${tabId}"]`);
+    if (activeButton) activeButton.classList.add('active');
+    currentTab = tabId;
+}
+
+// --- Проверка URL и показ вкладки "Управление" ---
+async function checkAndSetupReportTab() {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.url) return;
+
+    const url = new URL(tab.url);
+    if (url.pathname.startsWith('/report/')) {
+        document.getElementById('reportTabBtn').style.display = 'inline-block';
+        // Загружаем текущее состояние настройки при открытии попапа
+        await loadCurrentState(tab.id);
+    } else {
+        document.getElementById('reportTabBtn').style.display = 'none';
+        // Если мы не на странице отчёта, но вкладка "Управление" активна, переключаем на "Настройки"
+        if (currentTab === 'report') showTab('instances');
+    }
+}
+
+// --- Загрузка текущего значения настройки ---
+async function loadCurrentState(tabId) {
+    const stateSpan = document.getElementById('current-state');
+    const toggleBtn = document.getElementById('toggle-state-btn');
+    stateSpan.textContent = 'Загрузка...';
+    toggleBtn.disabled = true;
+
+    try {
+      console.log("load state", tabId);
+        // Отправляем запрос в контентный скрипт
+        const response = await chrome.tabs.sendMessage(tabId, {
+            action: 'getSetting',
+            // Здесь нужные параметры для запроса, читаемые из sessionStorage
+            // params: { /* param1: 'value1', param2: 'value2' */ }
+        });
+        if (response && response.success) {
+            stateSpan.textContent = response.value;
+            toggleBtn.disabled = false;
+        } else {
+            stateSpan.textContent = 'Ошибка загрузки';
+        }
+    } catch (error) {
+        console.error("Ошибка при загрузке состояния:", error);
+        stateSpan.textContent = 'Ошибка';
+    }
+}
+
+// --- Обработчик переключения ---
+async function onToggleState() {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) return;
+
+    const toggleBtn = document.getElementById('toggle-state-btn');
+    const stateSpan = document.getElementById('current-state');
+    toggleBtn.disabled = true;
+    stateSpan.textContent = 'Отправка...';
+
+    try {
+        const response = await chrome.tabs.sendMessage(tab.id, {
+            action: 'toggleSetting',
+            // params: { /* param1: 'value1', param2: 'value2' */ }
+        });
+        if (response && response.success) {
+            stateSpan.textContent = response.newValue;
+        } else {
+            stateSpan.textContent = 'Ошибка при переключении';
+        }
+    } catch (error) {
+        console.error("Ошибка при переключении:", error);
+        stateSpan.textContent = 'Ошибка';
+    } finally {
+        toggleBtn.disabled = false;
+    }
+}
+
+// --- Остальной код (инициализация списка инстансов и т.д.) ---
+
+document.addEventListener('DOMContentLoaded', async () => {
+    // Инициализация списка инстансов (как у тебя было)
+    chrome.storage.sync.get(['instances', 'activeInstances'], ({ instances = {}, activeInstances = [] }) => {
+        const list = document.getElementById('instances-list');
+        // ... (твой код для отображения списка) ...
+    });
+
+    document.getElementById('add-instance').addEventListener('click', addNewInstance);
+    document.getElementById('toggle-state-btn').addEventListener('click', onToggleState);
+
+    // Настройка вкладок
+    document.querySelectorAll('.tab-button').forEach(btn => {
+        btn.addEventListener('click', () => showTab(btn.getAttribute('data-tab')));
+    });
+
+    await checkAndSetupReportTab();
+});

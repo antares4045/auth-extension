@@ -176,7 +176,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'getSetting') {
         // Асинхронно получаем значение настройки
         getCurrentSetting(message.params).then(value => {
-            sendResponse({ success: true, value: "текущий ФД: " + value });
+            sendResponse({ success: true, value: "ФД " + value });
         }).catch(error => {
             console.error("Ошибка получения настройки:", error);
             sendResponse({ success: false, error: error.message });
@@ -185,7 +185,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     if (message.action === 'toggleSetting') {
         toggleSetting(message.params).then(newValue => {
-            sendResponse({ success: true, newValue: "установленный ФД: " + newValue });
+            sendResponse({ success: true, newValue: "ФД " + newValue });
         }).catch(error => {
             console.error("Ошибка переключения настройки:", error);
             sendResponse({ success: false, error: error.message });

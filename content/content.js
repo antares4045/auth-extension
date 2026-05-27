@@ -211,7 +211,7 @@ async function toggleSetting(params = null) {
     const currentValue = await getCurrentSetting(params);
     const newValue = currentValue == "4" ? "3" : "4";
     // Отправляем запрос на установку нового значения
-    const updateResponse = await requestToBridge('REP.SET_REPORT_SETTINGS', { ...params, "engineVersion": newValue }, true);
+    const updateResponse = await requestToBridge('REP.SET_REPORT_SETTINGS', { "settings": {"engineVersion": newValue} }, true);
     if (!updateResponse.ok) throw new Error('Failed to toggle setting');
     return newValue;
 }

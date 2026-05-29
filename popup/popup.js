@@ -90,7 +90,8 @@ async function checkAndSetupReportTab() {
     if (!tab || !tab.url) return;
 
     const url = new URL(tab.url);
-    if (url.pathname.startsWith('/report/')) {
+    if (url.pathname.match(/^\/report((\/.*)|())$/)) //.startsWith('/report/') || url.pathname == "/report"
+    {
         document.getElementById('reportTabBtn').style.display = 'inline-block';
         // Загружаем текущее состояние настройки при открытии попапа
         await loadCurrentState(tab.id);

@@ -30,7 +30,7 @@ function onFinish(state) {
     }
 }
 
-let apiUrl;
+var apiUrl;
 const tokenKey = "token";
 const requestToBridge  =  (command, params=null, useReceives=false) => {
         const myHeaders = new Headers();

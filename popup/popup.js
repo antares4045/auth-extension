@@ -95,11 +95,17 @@ async function checkAndSetupReportTab() {
         document.getElementById('reportTabBtn').style.display = 'inline-block';
         // Загружаем текущее состояние настройки при открытии попапа
         await loadCurrentState(tab.id);
+
+        // if (currentTab !== 'report') 
+            showTab('report');
     } else {
         document.getElementById('reportTabBtn').style.display = 'none';
         // Если мы не на странице отчёта, но вкладка "Управление" активна, переключаем на "Настройки"
-        if (currentTab === 'report') showTab('instances');
+        // if (currentTab === 'report') 
+            showTab('instances');
     }
+
+    
 }
 
 // --- Загрузка текущего значения настройки ---

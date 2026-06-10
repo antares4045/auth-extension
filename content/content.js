@@ -157,7 +157,8 @@ const requestToBridge  =  (command, params=null, useReceives=false) => {
             // const originalUrl = localStorage.getItem("originalUrl");
              console.log(`[Auth Injector] Токен сохранён.`);
 
-            chrome.storage.local.get('originalUrl', ({ originalUrl }) => {
+            chrome.runtime.sendMessage({ action: 'get-original-url' }, (response) => {
+                const originalUrl = response?.originalUrl;
                 console.log(`[Auth Injector] редирект на ${originalUrl}.`);
                 if (originalUrl && location.href !== originalUrl) {
                     location.replace(originalUrl);

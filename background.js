@@ -1,3 +1,18 @@
+let activeInstancesCache = []; // Или {}, зависит от того, как ты их хранишь
+
+// 2. Загружаем кэш при старте Service Worker
+chrome.storage.sync.get('activeInstances', (result) => {
+    activeInstancesCache = result.activeInstances || [];
+});
+
+// 3. Обновляем кэш, если пользователь изменил настройки (например, через popup)
+chrome.storage.onChanged.addListener((changes, namespace) => {
+    if (namespace === 'sync' && changes.activeInstances!== undefined) {
+        activeInstancesCache = changes.activeInstances.newValue ?? [];
+    }
+});
+
+
 // Фильтр: считаем навигацию "редиректом", если фронтенд/сервер нас перенаправил
 function isRedirect(details) {
     const q = details.transitionQualifiers || [];
@@ -7,20 +22,26 @@ function isRedirect(details) {
 chrome.webNavigation.onCommitted.addListener(function (details) {
     if (details.frameId === 0 && details.tabId > 0 && !isRedirect(details)) {
         // Ключ привязан к вкладке — вкладки больше не мешают друг другу
-        chrome.storage.local.set({ [`originalUrl_${details.tabId}`]: details.url });
+        const currentOrigin = new URL(details.url).origin;
+        const isAllowed = activeInstancesCache.includes(currentOrigin);
+
+        if (isAllowed) {
+          const key = `originalUrl_${details.tabId}`;
+          chrome.storage.session.set({ [key]: details.url });
+        }
     }
 });
 
 // На случай, если фронтенд — это SPA и переходит по истории (pushState)
 // chrome.webNavigation.onHistoryStateUpdated.addListener(function (details) {
 //     if (details.frameId === 0 && details.tabId > 0) {
-//         chrome.storage.local.set({ [`originalUrl_${details.tabId}`]: details.url });
+//         chrome.storage.session.set({ [`originalUrl_${details.tabId}`]: details.url });
 //     }
 // });
 
 // Убираем хвосты при закрытии вкладки
 chrome.tabs.onRemoved.addListener((tabId) => {
-    chrome.storage.local.remove(`originalUrl_${tabId}`);
+    chrome.storage.session.remove(`originalUrl_${tabId}`);
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -37,10 +58,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             return;
         }
         const key = `originalUrl_${tabId}`;
-        chrome.storage.local.get(key, (result) => {
+        chrome.storage.session.get(key, (result) => {
             sendResponse({ originalUrl: result[key] || null });
             // Одноразовый билетик: забрали — удалили, чтобы при следующем логине не сработало повторно
-            chrome.storage.local.remove(key);
+            chrome.storage.session.remove(key);
         });
         return true; // важно: отвечаем асинхронно
     }

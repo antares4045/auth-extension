@@ -58,6 +58,12 @@ const requestToBridge  =  (command, params=null, useReceives=false) => {
         return fetch(apiUrl, requestOptions)
     }
 
+function updateApiUrl({endpoint = '/api', host = '' }={})
+{
+    const localStorageIP = localStorage.getItem("IP");
+    apiUrl = localStorageIP || host+endpoint;
+}
+
 // Ждём полной загрузки DOM
  function tryLogin(){
 
@@ -65,9 +71,10 @@ const requestToBridge  =  (command, params=null, useReceives=false) => {
     const currentOrigin = window.location.origin;
     const config = instances[currentOrigin];
     
-    console.log("currentOrigin: ", currentOrigin)
-    
-    if (!config || !activeInstances.includes(currentOrigin)) return onFinish('');;
+    console.log("currentOrigin: ", currentOrigin);
+    updateApiUrl(config);
+
+    if (!config || !activeInstances.includes(currentOrigin)) return onFinish('');
     let state;
     try {
         switch (config.authMethod) {
@@ -88,13 +95,10 @@ const requestToBridge  =  (command, params=null, useReceives=false) => {
 
 
     // AES-ECB авторизация
-    async function getAESToken({ login, password, endpoint = '/api', host = '' }) {
+    async function getAESToken({ login, password}) {
         
         let token;
 
-        const localStorageIP = localStorage.getItem("IP")
-
-        apiUrl = localStorageIP || host+endpoint;
         if(localStorageIP){
             chrome.runtime.sendMessage({
                 action: 'set-badge',

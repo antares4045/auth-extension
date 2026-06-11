@@ -98,7 +98,8 @@ function updateApiUrl({endpoint = '/api', host = '' }={})
     async function getAESToken({ login, password}) {
         
         let token;
-
+        
+        const localStorageIP = localStorage.getItem("IP");
         if(localStorageIP){
             chrome.runtime.sendMessage({
                 action: 'set-badge',

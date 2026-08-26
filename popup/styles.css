@@ -251,4 +251,32 @@ body {
     font-size: 12px;
 }
 
+.formula-browser-card {
+    margin-top: 12px;
+}
+
+.material-card-description {
+    margin: -4px 0 14px;
+    color: rgba(0,0,0,0.6);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.material-button-block {
+    width: 100%;
+}
+
+.material-button:disabled {
+    opacity: 0.55;
+    cursor: wait;
+}
+
+.material-inline-status {
+    min-height: 16px;
+    margin-top: 8px;
+    color: var(--error);
+    font-size: 11px;
+    line-height: 1.35;
+}
+
 /* Адаптивная ширина для маленьких экранов (уже 320px) */

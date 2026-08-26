@@ -163,6 +163,36 @@ async function onToggleState() {
     }
 }
 
+async function onOpenFormulaBrowser() {
+    const button = document.getElementById('open-formula-browser-btn');
+    const status = document.getElementById('formula-browser-status');
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+    if (!tab) {
+        status.textContent = 'Активная вкладка не найдена';
+        return;
+    }
+
+    button.disabled = true;
+    button.textContent = 'Открытие...';
+    status.textContent = '';
+
+    try {
+        const response = await chrome.tabs.sendMessage(tab.id, {
+            action: 'openFormulaBrowser',
+        });
+        if (!response?.success) {
+            throw new Error(response?.error || 'Контентный скрипт не ответил');
+        }
+        window.close();
+    } catch (error) {
+        console.error('Ошибка открытия браузера формул:', error);
+        status.textContent = 'Не удалось открыть. Обновите страницу отчёта.';
+        button.disabled = false;
+        button.textContent = 'Открыть браузер формул';
+    }
+}
+
 // --- Остальной код (инициализация списка инстансов и т.д.) ---
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -174,6 +204,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     document.getElementById('add-instance').addEventListener('click', addNewInstance);
     document.getElementById('toggle-state-btn').addEventListener('click', onToggleState);
+    document.getElementById('open-formula-browser-btn').addEventListener('click', onOpenFormulaBrowser);
 
     // Настройка вкладок
     document.querySelectorAll('.tab-button').forEach(btn => {

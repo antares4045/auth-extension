@@ -58,6 +58,33 @@ const requestToBridge  =  (command, params=null, useReceives=false) => {
         return fetch(apiUrl, requestOptions)
     }
 
+async function requestJsonFromBridge(command, params = null, useReceives = false) {
+    if (!localStorage.getItem(tokenKey)) {
+        throw new Error('В localStorage нет token — сначала авторизуйтесь');
+    }
+    if (useReceives && (!sessionStorage.getItem('receiver') || !sessionStorage.getItem('streamreceiver'))) {
+        throw new Error('В sessionStorage нет receiver/streamreceiver — откройте отчёт заново');
+    }
+    if (!apiUrl) {
+        const { instances = {} } = await chrome.storage.sync.get('instances');
+        updateApiUrl(instances[window.location.origin]);
+    }
+
+    const response = await requestToBridge(command, params, useReceives);
+    if (!response.ok) throw new Error(`${command}: HTTP ${response.status}`);
+
+    const text = await response.text();
+    try {
+        return JSON.parse(text);
+    } catch {
+        throw new Error(`${command}: сервер вернул не JSON`);
+    }
+}
+
+globalThis.AuthInjectorBridge = Object.freeze({
+    requestJson: requestJsonFromBridge,
+});
+
 function updateApiUrl({endpoint = '/api', host = '' }={})
 {
     const localStorageIP = localStorage.getItem("IP");

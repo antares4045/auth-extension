@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Universal Auth Injector",
-  "version": "1.1.21",
+  "version": "1.2.0",
   "permissions": ["storage", "webNavigation", "tabs"],
   "action": {
     "default_popup": "popup/popup.html",
@@ -12,7 +12,12 @@
   },
   "content_scripts": [{
     "matches": ["<all_urls>"],
-    "js": ["assets/crypto-js.js", "content/content.js"],
+    "js": [
+      "assets/crypto-js.js",
+      "content/content.js",
+      "content/formula-browser-core.js",
+      "content/formula-browser.js"
+    ],
     "run_at": "document_start"
   }]
 }

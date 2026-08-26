@@ -48,8 +48,7 @@
     loaded: false,
     loading: false,
     loadController: null,
-    history: [],
-    historyIndex: -1,
+    history: core.createNavigationHistory(),
     sidebarTab: 'variables',
     variableGrouping: 'request',
     zoneMode: 'none',
@@ -393,7 +392,7 @@
       populateVariableOptions();
       renderVariableList();
 
-      if (state.historyIndex >= 0) renderCurrent();
+      if (state.history.current()) renderCurrent();
       else renderWelcome();
 
       const ignoredCount = rawVariables.length - state.variables.length;
@@ -510,38 +509,27 @@
   }
 
   function navigate(entry) {
-    const current = state.history[state.historyIndex];
-    if (sameEntry(current, entry)) return;
-    state.history = state.history.slice(0, state.historyIndex + 1);
-    state.history.push(entry);
-    state.historyIndex = state.history.length - 1;
+    if (!state.history.visit(entry)) return;
     renderCurrent();
   }
 
-  function sameEntry(a, b) {
-    if (!a || !b || a.kind !== b.kind) return false;
-    return a.kind === 'variable' ? a.id === b.id : a.formula === b.formula;
-  }
-
   function goBack() {
-    if (state.historyIndex <= 0) return;
-    state.historyIndex -= 1;
+    if (!state.history.back()) return;
     renderCurrent();
   }
 
   function goForward() {
-    if (state.historyIndex >= state.history.length - 1) return;
-    state.historyIndex += 1;
+    if (!state.history.forward()) return;
     renderCurrent();
   }
 
   function updateHistoryControls() {
     if (!state.shadow) return;
-    state.shadow.getElementById('fb-back').disabled = state.historyIndex <= 0;
-    state.shadow.getElementById('fb-forward').disabled =
-      state.historyIndex < 0 || state.historyIndex >= state.history.length - 1;
+    const history = state.history.snapshot();
+    state.shadow.getElementById('fb-back').disabled = !history.canBack;
+    state.shadow.getElementById('fb-forward').disabled = !history.canForward;
     state.shadow.getElementById('fb-history-position').textContent =
-      state.historyIndex < 0 ? '0 / 0' : `${state.historyIndex + 1} / ${state.history.length}`;
+      history.currentIndex < 0 ? '0 / 0' : `${history.position} / ${history.length}`;
     renderHistoryList();
   }
 
@@ -739,12 +727,13 @@
     const target = state.shadow.getElementById('fb-history-list');
     if (!target) return;
     target.replaceChildren();
-    if (!state.history.length) {
+    const history = state.history.snapshot();
+    if (!history.entries.length) {
       target.appendChild(element('div', 'fb-sidebar-empty', 'История пока пуста'));
       return;
     }
-    state.history.forEach((entry, index) => {
-      const button = element('button', `fb-sidebar-item fb-history-item${index === state.historyIndex ? ' is-current' : ''}`);
+    history.entries.forEach((entry, index) => {
+      const button = element('button', `fb-sidebar-item fb-history-item${index === history.currentIndex ? ' is-current' : ''}`);
       button.type = 'button';
       const label = entry.kind === 'variable'
         ? variableLabel(state.variablesById.get(entry.id) || { id: entry.id })
@@ -756,7 +745,7 @@
       );
       button.title = label;
       button.addEventListener('click', () => {
-        state.historyIndex = index;
+        state.history.select(index);
         renderCurrent();
       });
       target.appendChild(button);
@@ -765,7 +754,7 @@
 
   function renderCurrent() {
     updateHistoryControls();
-    const entry = state.history[state.historyIndex];
+    const entry = state.history.current();
     if (!entry) return renderWelcome();
     if (entry.kind === 'variable') renderVariable(entry.id);
     else renderValidatedFormula(entry);

@@ -4,6 +4,35 @@ const { performance } = require('node:perf_hooks');
 
 const FormulaBrowserCore = require('../content/formula-browser-core.js');
 
+test('сохраняет журнал посещений при замене ветки переходов вперёд', () => {
+  const history = FormulaBrowserCore.createNavigationHistory();
+  const first = { kind: 'variable', id: 'first' };
+  const second = { kind: 'variable', id: 'second' };
+  const third = { kind: 'variable', id: 'third' };
+  const fourth = { kind: 'variable', id: 'fourth' };
+
+  history.visit(first);
+  history.visit(second);
+  history.visit(third);
+  history.select(1);
+  history.visit(fourth);
+
+  assert.deepEqual(history.snapshot(), {
+    entries: [first, second, third, fourth],
+    current: fourth,
+    currentIndex: 3,
+    canBack: true,
+    canForward: false,
+    position: 3,
+    length: 3,
+  });
+
+  assert.equal(history.back(), true);
+  assert.equal(history.current(), second);
+  assert.equal(history.forward(), true);
+  assert.equal(history.current(), fourth);
+});
+
 test('различает неограниченный, ограниченный и повреждённый предел вложенности', () => {
   assert.deepEqual(FormulaBrowserCore.parseExpansionDepth(undefined), { kind: 'unlimited' });
   assert.deepEqual(FormulaBrowserCore.parseExpansionDepth(null), { kind: 'unlimited' });

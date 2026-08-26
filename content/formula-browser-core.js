@@ -62,6 +62,87 @@
     return { kind: 'limited', value: depth };
   }
 
+  function createNavigationHistory() {
+    const visits = [];
+    let currentIndex = -1;
+
+    function sameEntry(a, b) {
+      if (!a || !b || a.kind !== b.kind) return false;
+      return a.kind === 'variable' ? a.id === b.id : a.formula === b.formula;
+    }
+
+    function visit(entry) {
+      const currentVisit = visits[currentIndex];
+      if (sameEntry(currentVisit?.entry, entry)) return false;
+
+      const nextIndex = visits.length;
+      visits.push({ entry, parentIndex: currentIndex, forwardIndex: -1 });
+      if (currentVisit) currentVisit.forwardIndex = nextIndex;
+      currentIndex = nextIndex;
+      return true;
+    }
+
+    function select(index) {
+      if (!Number.isInteger(index) || index < 0 || index >= visits.length) return false;
+
+      let childIndex = index;
+      let parentIndex = visits[childIndex].parentIndex;
+      while (parentIndex >= 0) {
+        visits[parentIndex].forwardIndex = childIndex;
+        childIndex = parentIndex;
+        parentIndex = visits[childIndex].parentIndex;
+      }
+      currentIndex = index;
+      return true;
+    }
+
+    function back() {
+      const parentIndex = visits[currentIndex]?.parentIndex ?? -1;
+      if (parentIndex < 0) return false;
+      currentIndex = parentIndex;
+      return true;
+    }
+
+    function forward() {
+      const forwardIndex = visits[currentIndex]?.forwardIndex ?? -1;
+      if (forwardIndex < 0) return false;
+      currentIndex = forwardIndex;
+      return true;
+    }
+
+    function current() {
+      return visits[currentIndex]?.entry;
+    }
+
+    function snapshot() {
+      let position = 0;
+      let cursor = currentIndex;
+      while (cursor >= 0) {
+        position += 1;
+        cursor = visits[cursor].parentIndex;
+      }
+
+      let length = position;
+      cursor = visits[currentIndex]?.forwardIndex ?? -1;
+      while (cursor >= 0) {
+        length += 1;
+        cursor = visits[cursor].forwardIndex;
+      }
+
+      return {
+        entries: visits.map((item) => item.entry),
+        current: current(),
+        currentIndex,
+        canBack: (visits[currentIndex]?.parentIndex ?? -1) >= 0,
+        canForward: (visits[currentIndex]?.forwardIndex ?? -1) >= 0,
+        position,
+        length,
+      };
+    }
+
+    return { back, current, forward, select, snapshot, visit };
+  }
+
   function summarizeSourceNames(sources, options = {}) {
     const maxItems = Math.max(1, Number(options.maxItems) || 3);
     const maxLength = Math.max(16, Number(options.maxLength) || 120);
@@ -781,6 +862,7 @@
   return {
     collectReferences,
     createModel,
+    createNavigationHistory,
     parseExpansionDepth,
     normalizeVariableQuery,
     summarizeSourceNames,

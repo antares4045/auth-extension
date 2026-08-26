@@ -39,8 +39,10 @@ crypto-js.js  - 4.2.0.min
 
 ## GitHub Releases
 
-Workflow `Release CRX` создаёт CRX и GitHub Release с тегом, совпадающим с версией
-из `manifest.json` (например, `v1.2.7`). Перед первым запуском:
+Workflow `Release CRX` создаёт GitHub Release с тегом, совпадающим с версией из
+`manifest.json` (например, `v1.2.7`), и прикладывает два файла: исходный `.crx`
+и `.crx.zip`. ZIP-обёртка нужна для скачивания через Chrome, который перехватывает
+прямую загрузку стороннего CRX как попытку установки. Перед первым запуском:
 
 1. Создайте GitHub Environment с именем `release` и, по возможности, включите
    required reviewer.

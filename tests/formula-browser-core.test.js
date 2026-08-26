@@ -3,6 +3,21 @@ const assert = require('node:assert/strict');
 
 const FormulaBrowserCore = require('../content/formula-browser-core.js');
 
+test('ограничивает подпись длинного списка DP-источников до объединения строки', () => {
+  const sources = Array.from({ length: 10000 }, (_, index) => ({
+    dpName: `Очень длинный источник ${index}`,
+  }));
+
+  const summary = FormulaBrowserCore.summarizeSourceNames(sources, {
+    maxItems: 3,
+    maxLength: 60,
+  });
+
+  assert.ok(summary.length < 90);
+  assert.match(summary, /… \+9998$/);
+  assert.doesNotMatch(summary, /источник 9999/);
+});
+
 test('показывает прямые зависимости в порядке формулы без повторов', () => {
   const variables = [
     {

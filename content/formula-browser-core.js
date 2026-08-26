@@ -51,6 +51,29 @@
       .toLocaleLowerCase('ru');
   }
 
+  function summarizeSourceNames(sources, options = {}) {
+    const maxItems = Math.max(1, Number(options.maxItems) || 3);
+    const maxLength = Math.max(16, Number(options.maxLength) || 120);
+    const items = Array.isArray(sources) ? sources : [];
+    const visible = [];
+
+    for (const source of items) {
+      if (visible.length >= maxItems) break;
+      const name = String(source?.dpName || source?.dpId || '').trim();
+      if (!name) continue;
+      const candidate = [...visible, name].join(', ');
+      if (candidate.length > maxLength) {
+        if (!visible.length) visible.push(`${name.slice(0, maxLength - 1)}…`);
+        break;
+      }
+      visible.push(name);
+    }
+
+    const hiddenCount = Math.max(0, items.length - visible.length);
+    const label = visible.join(', ') || 'Источник без названия';
+    return hiddenCount ? `${label} … +${hiddenCount}` : label;
+  }
+
   function createModel(variables = [], dps = []) {
     const validVariables = (Array.isArray(variables) ? variables : []).filter(
       (variable) =>
@@ -597,5 +620,6 @@
     collectReferences,
     createModel,
     normalizeVariableQuery,
+    summarizeSourceNames,
   };
 });

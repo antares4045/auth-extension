@@ -3,6 +3,8 @@
 
   const core = globalThis.FormulaBrowserCore;
   const GROUPING_STORAGE_KEY = 'formulaBrowserVariableGrouping';
+  const TREE_RENDER_BUDGET = 2000;
+  const TREE_EXPAND_BATCH = 100;
   const TYPE_ICON_PATHS = {
     dimension: [
       'M13.3333 11.9531V13H3V2.66667L4 2.66678L2 0L0 2.66667H1V15H13.3333V16L16 14L13.3333 11.9531Z',
@@ -913,63 +915,115 @@
     const refs = uniqueReferences(core.collectReferences(root));
     if (!refs.length) body.appendChild(element('p', 'fb-muted', 'Формула не содержит переменных.'));
     else {
-      const tree = renderReferenceTree(refs, ancestors);
-      if (tree.querySelector('.fb-tree-toggle')) {
+      const treeContext = {
+        root: null,
+        button: null,
+        remaining: TREE_RENDER_BUDGET,
+        batchActive: false,
+        operation: 0,
+        truncated: false,
+      };
+      const tree = renderReferenceTree(refs, ancestors, treeContext);
+      treeContext.root = tree;
+      if (tree.querySelector('.fb-tree-toggle, .fb-tree-more')) {
         const controls = element('div', 'fb-tree-controls');
         const expandAll = element('button', 'fb-tree-expand-all', 'Развернуть всё');
         expandAll.type = 'button';
-        expandAll.addEventListener('click', () => toggleWholeTree(tree, expandAll));
+        treeContext.button = expandAll;
+        expandAll.addEventListener('click', () => toggleWholeTree(treeContext));
         controls.appendChild(expandAll);
         body.appendChild(controls);
       }
       body.appendChild(tree);
+      syncWholeTreeButton(treeContext);
     }
     return sectionCard('Дерево зависимостей', body);
   }
 
-  async function toggleWholeTree(tree, button) {
-    const hasCollapsed = tree.querySelector('.fb-tree-toggle[aria-expanded="false"]');
+  async function toggleWholeTree(context) {
+    const { root: tree, button } = context;
+    const operation = context.operation + 1;
+    context.operation = operation;
+    context.batchActive = true;
+    context.remaining = TREE_RENDER_BUDGET;
     button.disabled = true;
 
-    if (!hasCollapsed) {
-      const expanded = Array.from(
-        tree.querySelectorAll('.fb-tree-toggle[aria-expanded="true"]'),
-      ).reverse();
-      expanded.forEach((toggle) => toggle.click());
-      button.textContent = 'Развернуть всё';
-      button.disabled = false;
-      setStatus('Дерево зависимостей свернуто', 'neutral');
-      return;
-    }
-
-    let expandedCount = 0;
-    const maxExpandedBranches = 2000;
-    while (expandedCount < maxExpandedBranches) {
-      const collapsed = Array.from(
-        tree.querySelectorAll('.fb-tree-toggle[aria-expanded="false"]'),
-      ).slice(0, Math.min(100, maxExpandedBranches - expandedCount));
-      if (!collapsed.length) break;
-      collapsed.forEach((toggle) => toggle.click());
-      expandedCount += collapsed.length;
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-    }
-
-    const truncated = Boolean(tree.querySelector('.fb-tree-toggle[aria-expanded="false"]'));
-    button.textContent = truncated ? 'Развернуть ещё' : 'Свернуть всё';
-    button.disabled = false;
-    if (truncated) {
-      setStatus(
-        `Дерево частично раскрыто: достигнут лимит ${maxExpandedBranches} ветвей`,
-        'warning',
+    try {
+      const hasPending = tree.querySelector(
+        '.fb-tree-toggle[aria-expanded="false"], .fb-tree-more',
       );
-    } else {
-      setStatus('Дерево зависимостей раскрыто', 'success');
+      if (!hasPending) {
+        const expanded = Array.from(
+          tree.querySelectorAll('.fb-tree-toggle[aria-expanded="true"]'),
+        ).reverse();
+        expanded.forEach((toggle) => toggle.click());
+        context.truncated = false;
+        if (treeOperationIsCurrent(context, operation)) {
+          setStatus('Дерево зависимостей свернуто', 'neutral');
+        }
+        return;
+      }
+
+      let processed = 0;
+      while (processed < TREE_RENDER_BUDGET && context.remaining > 0) {
+        if (!treeOperationIsCurrent(context, operation)) return;
+        const pending = Array.from(tree.querySelectorAll(
+          '.fb-tree-toggle[aria-expanded="false"], .fb-tree-more',
+        )).slice(0, Math.min(TREE_EXPAND_BATCH, TREE_RENDER_BUDGET - processed));
+        if (!pending.length) break;
+        pending.forEach((control) => {
+          if (context.remaining > 0) control.click();
+        });
+        processed += pending.length;
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+
+      if (!treeOperationIsCurrent(context, operation)) return;
+      context.truncated = Boolean(tree.querySelector(
+        '.fb-tree-toggle[aria-expanded="false"], .fb-tree-more',
+      ));
+      if (context.truncated) {
+        setStatus(
+          `Дерево частично раскрыто: достигнут лимит ${TREE_RENDER_BUDGET} узлов`,
+          'warning',
+        );
+      } else {
+        setStatus('Дерево зависимостей раскрыто', 'success');
+      }
+    } finally {
+      if (context.operation === operation) {
+        context.batchActive = false;
+        button.disabled = false;
+        syncWholeTreeButton(context);
+      }
     }
   }
 
-  function renderReferenceTree(references, ancestors) {
+  function treeOperationIsCurrent(context, operation) {
+    return context.operation === operation &&
+      context.root?.isConnected &&
+      state.host?.style.display !== 'none';
+  }
+
+  function syncWholeTreeButton(context) {
+    const { root, button } = context;
+    if (!root || !button) return;
+    const hasMore = Boolean(root.querySelector('.fb-tree-more'));
+    const hasCollapsed = Boolean(root.querySelector('.fb-tree-toggle[aria-expanded="false"]'));
+    const hasExpanded = Boolean(root.querySelector('.fb-tree-toggle[aria-expanded="true"]'));
+    button.parentElement.hidden = !hasMore && !hasCollapsed && !hasExpanded;
+    if (hasMore || (context.truncated && hasCollapsed)) button.textContent = 'Развернуть ещё';
+    else if (hasCollapsed) button.textContent = 'Развернуть всё';
+    else if (hasExpanded) button.textContent = 'Свернуть всё';
+  }
+
+  function renderReferenceTree(references, ancestors, context, startIndex = 0) {
     const list = element('ul', 'fb-tree-list');
-    references.forEach((reference) => {
+    let referenceIndex = startIndex;
+    while (referenceIndex < references.length && context.remaining > 0) {
+      const reference = references[referenceIndex];
+      referenceIndex += 1;
+      context.remaining -= 1;
       const item = element('li', 'fb-tree-item');
       const variable = state.variablesById.get(reference.id);
       const row = element('div', 'fb-tree-row');
@@ -979,7 +1033,7 @@
         row.appendChild(element('span', 'fb-tree-note', 'не найдена'));
         item.appendChild(row);
         list.appendChild(item);
-        return;
+        continue;
       }
 
       const open = element('button', 'fb-tree-link', variable.name || reference.literal || variable.id);
@@ -1005,7 +1059,7 @@
 
       const source = state.model.getSourceInfo(variable.id);
       if (source?.sources?.length) {
-        const sourceNames = source.sources.map((item) => item.dpName).join(', ');
+        const sourceNames = core.summarizeSourceNames(source.sources);
         const note = element('span', 'fb-tree-note', sourceNames);
         note.title = sourceNames;
         row.appendChild(note);
@@ -1020,17 +1074,48 @@
         let rendered = false;
         toggle.addEventListener('click', () => {
           if (!rendered) {
-            branch.appendChild(renderReferenceTree(children, [...ancestors, variable.id]));
+            if (!context.batchActive) context.remaining = TREE_RENDER_BUDGET;
+            branch.appendChild(renderReferenceTree(
+              children,
+              [...ancestors, variable.id],
+              context,
+            ));
             rendered = true;
           }
           branch.hidden = !branch.hidden;
           toggle.textContent = branch.hidden ? '▸' : '▾';
           toggle.setAttribute('aria-expanded', String(!branch.hidden));
+          if (!context.batchActive) context.truncated = false;
+          syncWholeTreeButton(context);
         });
         item.appendChild(branch);
       }
       list.appendChild(item);
-    });
+    }
+
+    if (referenceIndex < references.length) {
+      const item = element('li', 'fb-tree-item fb-tree-more-item');
+      const more = element(
+        'button',
+        'fb-tree-more',
+        `Показать ещё (${references.length - referenceIndex})`,
+      );
+      more.type = 'button';
+      more.addEventListener('click', () => {
+        if (!context.batchActive) context.remaining = TREE_RENDER_BUDGET;
+        const continuation = renderReferenceTree(
+          references,
+          ancestors,
+          context,
+          referenceIndex,
+        );
+        item.replaceWith(...Array.from(continuation.childNodes));
+        if (!context.batchActive) context.truncated = false;
+        syncWholeTreeButton(context);
+      });
+      item.appendChild(more);
+      list.appendChild(item);
+    }
     return list;
   }
 
@@ -1529,6 +1614,7 @@
       .fb-source code { grid-column: 1 / -1; color: #8492a6; font-size: 11px; overflow-wrap: anywhere; }
       .fb-tree { max-height: 520px; overflow: auto; padding-right: 3px; }
       .fb-tree-controls { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+      .fb-tree-controls[hidden] { display: none; }
       .fb-tree-expand-all { padding: 2px 4px; border: 0; background: transparent; color: #58799c; font-size: 10px; cursor: pointer; }
       .fb-tree-expand-all:hover { color: #255da9; text-decoration: underline; }
       .fb-tree-expand-all:disabled { color: #9aa8b7; cursor: wait; text-decoration: none; }
@@ -1539,6 +1625,8 @@
       .fb-tree-toggle, .fb-tree-toggle-spacer { flex: 0 0 16px; width: 16px; height: 18px; }
       .fb-tree-toggle { padding: 0; border: 0; border-radius: 3px; background: transparent; color: #64748b; line-height: 1; cursor: pointer; }
       .fb-tree-toggle:hover { background: #edf2f7; color: #255da9; }
+      .fb-tree-more { margin-left: 22px; padding: 2px 0; border: 0; background: transparent; color: #58799c; font-size: 10px; cursor: pointer; }
+      .fb-tree-more:hover { color: #255da9; text-decoration: underline; }
       .fb-tree-link { flex: 1 1 55%; min-width: 90px; padding: 1px 0; border: 0; background: transparent; color: #255da9; text-align: left; overflow-wrap: break-word; cursor: pointer; }
       .fb-tree-link:hover { text-decoration: underline; }
       .fb-tree-note { flex: 0 1 40%; min-width: 0; max-width: 40%; margin-left: auto; overflow: hidden; color: #8492a6; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }

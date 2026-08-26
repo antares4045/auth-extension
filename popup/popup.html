@@ -19,6 +19,17 @@
             <div class="material-subtitle">Автологин для:</div>
             <div id="instances-list" class="material-list"></div>
             <button id="add-instance" class="material-button material-button-primary">+ Добавить инстанс</button>
+            <div class="material-card settings-transfer-card">
+                <div class="material-subtitle">Резервная копия</div>
+                <div class="material-card-description">Файл содержит все sync-настройки, хоткей, логины и пароли. Храните его в безопасном месте.</div>
+                <div class="settings-transfer-actions">
+                    <button id="export-settings-btn" class="material-button material-button-primary" type="button">Экспорт</button>
+                    <button id="import-settings-btn" class="material-button material-button-secondary" type="button">Импорт</button>
+                </div>
+                <input id="import-settings-file" type="file" accept="application/json,.json" hidden>
+                <div id="settings-transfer-status" class="material-inline-status settings-transfer-status" aria-live="polite"></div>
+                <button id="apply-imported-shortcut-btn" class="material-text-button" type="button" hidden>Настроить хоткей</button>
+            </div>
         </div>
 
         <!-- Содержимое вкладки "Управление" -->
@@ -43,6 +54,7 @@
             </div>
         </div>
     </div>
+    <script src="settings-transfer.js"></script>
     <script src="popup.js"></script>
 </body>
 </html>

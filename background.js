@@ -1,3 +1,7 @@
+if (typeof importScripts === 'function') {
+    importScripts('popup/settings-transfer.js');
+}
+
 let activeInstancesCache = []; // Или {}, зависит от того, как ты их хранишь
 
 // 2. Загружаем кэш при старте Service Worker
@@ -59,6 +63,22 @@ chrome.commands.onCommand.addListener(async (command, commandTab) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+
+    if (msg.action === 'import-settings-backup') {
+        SettingsTransfer.importBackup(msg.backup, {
+            storageArea: chrome.storage.sync,
+            commandsApi: chrome.commands,
+        }).then(
+            (result) => sendResponse({ success: true, result }),
+            (error) => sendResponse({
+                success: false,
+                error: error?.message || String(error),
+                rollbackError: Boolean(error?.rollbackError),
+                shortcutRollbackErrors: error?.shortcutRollbackErrors || [],
+            }),
+        );
+        return true;
+    }
 
     if (msg.action === 'set-badge') {
         if (msg.text !== undefined)   chrome.action.setBadgeText({ text: msg.text });

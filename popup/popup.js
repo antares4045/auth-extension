@@ -1,7 +1,9 @@
 // Загрузка конфигов
-chrome.storage.sync.get(['instances', 'activeInstances'], ({ instances = {}, activeInstances = [] }) => {
+async function loadInstances() {
+  const { instances = {}, activeInstances = [] } = await chrome.storage.sync.get(['instances', 'activeInstances']);
   const list = document.getElementById('instances-list');
-  
+  list.textContent = '';
+
   // Отображение списка инстансов
   Object.entries(instances).forEach(([url, config]) => {
     const div = document.createElement('div');
@@ -37,10 +39,7 @@ chrome.storage.sync.get(['instances', 'activeInstances'], ({ instances = {}, act
     // div.appendChild(document.createTextNode(url));
     list.appendChild(div);
   });
-  
-  // Кнопка добавления
-  document.getElementById('add-instance').addEventListener('click', addNewInstance);
-});
+}
 
 // Переключение инстанса
 async function toggleInstance(url, isActive) {
@@ -230,6 +229,11 @@ async function loadFormulaBrowserShortcut() {
 
 async function openShortcutSettings() {
     try {
+        if (typeof chrome.commands.openShortcutSettings === 'function') {
+            await chrome.commands.openShortcutSettings();
+            window.close();
+            return;
+        }
         await chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
         window.close();
     } catch {
@@ -238,25 +242,129 @@ async function openShortcutSettings() {
     }
 }
 
+function setSettingsTransferBusy(isBusy) {
+    document.getElementById('export-settings-btn').disabled = isBusy;
+    document.getElementById('import-settings-btn').disabled = isBusy;
+}
+
+function showSettingsTransferStatus(message, isError = false) {
+    const status = document.getElementById('settings-transfer-status');
+    status.textContent = message;
+    status.classList.toggle('is-error', isError);
+}
+
+async function onExportSettings() {
+    setSettingsTransferBusy(true);
+    showSettingsTransferStatus('Подготовка файла...');
+    document.getElementById('apply-imported-shortcut-btn').hidden = true;
+
+    try {
+        const [storageSync, commands] = await Promise.all([
+            chrome.storage.sync.get(null),
+            chrome.commands.getAll(),
+        ]);
+        const backup = SettingsTransfer.createBackup(storageSync, commands);
+        const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+        const objectUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = objectUrl;
+        link.download = `universal-auth-injector-settings-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(objectUrl);
+        showSettingsTransferStatus('Настройки экспортированы.');
+    } catch (error) {
+        console.error('Ошибка экспорта настроек:', error);
+        showSettingsTransferStatus(`Не удалось экспортировать: ${error.message}`, true);
+    } finally {
+        setSettingsTransferBusy(false);
+    }
+}
+
+function onChooseImportFile() {
+    const input = document.getElementById('import-settings-file');
+    input.value = '';
+    input.click();
+}
+
+async function onImportSettings(event) {
+    const [file] = event.target.files || [];
+    if (!file) return;
+
+    setSettingsTransferBusy(true);
+    showSettingsTransferStatus('Импорт настроек...');
+    const shortcutButton = document.getElementById('apply-imported-shortcut-btn');
+    shortcutButton.hidden = true;
+
+    try {
+        if (file.size > 5 * 1024 * 1024) {
+            throw new Error('файл слишком большой');
+        }
+        const backup = SettingsTransfer.parseBackup(await file.text());
+        const response = await chrome.runtime.sendMessage({
+            action: 'import-settings-backup',
+            backup,
+        });
+        if (!response?.success) {
+            const importError = new Error(response?.error || 'service worker не ответил');
+            importError.rollbackError = response?.rollbackError;
+            importError.shortcutRollbackErrors = response?.shortcutRollbackErrors;
+            throw importError;
+        }
+        const result = response.result;
+
+        await loadInstances();
+        await loadFormulaBrowserShortcut();
+
+        const pendingShortcut = result.manualShortcuts[0];
+        if (pendingShortcut) {
+            const shortcutInstruction = pendingShortcut.shortcut
+                ? `Хоткей ${pendingShortcut.shortcut} назначьте вручную.`
+                : 'Хоткей снимите вручную.';
+            showSettingsTransferStatus(`Настройки импортированы. ${shortcutInstruction}`);
+            shortcutButton.hidden = false;
+        } else if (result.skippedShortcuts.length > 0) {
+            showSettingsTransferStatus('Настройки импортированы. Хоткей из файла не найден в этой версии расширения.', true);
+        } else if (Object.keys(backup.shortcuts).length === 0) {
+            showSettingsTransferStatus('Настройки импортированы. В файле нет хоткея.');
+        } else {
+            showSettingsTransferStatus('Настройки и хоткей импортированы.');
+        }
+    } catch (error) {
+        console.error('Ошибка импорта настроек:', error);
+        const rollbackNote = error.rollbackError
+            ? ' Не удалось также вернуть прежние настройки.'
+            : '';
+        const shortcutRollbackNote = error.shortcutRollbackErrors?.length
+            ? ' Не удалось также вернуть прежний хоткей.'
+            : '';
+        showSettingsTransferStatus(
+            `Не удалось импортировать: ${error.message}.${rollbackNote}${shortcutRollbackNote}`.trim(),
+            true,
+        );
+    } finally {
+        setSettingsTransferBusy(false);
+    }
+}
+
 // --- Остальной код (инициализация списка инстансов и т.д.) ---
 
 document.addEventListener('DOMContentLoaded', async () => {
-    // Инициализация списка инстансов (как у тебя было)
-    chrome.storage.sync.get(['instances', 'activeInstances'], ({ instances = {}, activeInstances = [] }) => {
-        const list = document.getElementById('instances-list');
-        // ... (твой код для отображения списка) ...
-    });
-
     document.getElementById('add-instance').addEventListener('click', addNewInstance);
     document.getElementById('toggle-state-btn').addEventListener('click', onToggleState);
     document.getElementById('open-formula-browser-btn').addEventListener('click', onOpenFormulaBrowser);
     document.getElementById('configure-shortcuts-btn').addEventListener('click', openShortcutSettings);
+    document.getElementById('export-settings-btn').addEventListener('click', onExportSettings);
+    document.getElementById('import-settings-btn').addEventListener('click', onChooseImportFile);
+    document.getElementById('import-settings-file').addEventListener('change', onImportSettings);
+    document.getElementById('apply-imported-shortcut-btn').addEventListener('click', openShortcutSettings);
 
     // Настройка вкладок
     document.querySelectorAll('.tab-button').forEach(btn => {
         btn.addEventListener('click', () => showTab(btn.getAttribute('data-tab')));
     });
 
-    await checkAndSetupReportTab();
+    await Promise.all([loadInstances(), checkAndSetupReportTab()]);
     await loadFormulaBrowserShortcut();
 });

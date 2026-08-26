@@ -303,4 +303,26 @@ body {
     text-decoration: underline;
 }
 
+.settings-transfer-card {
+    margin-top: 16px;
+}
+
+.settings-transfer-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.settings-transfer-actions .material-button {
+    width: 100%;
+}
+
+.settings-transfer-status {
+    color: rgba(0,0,0,0.65);
+}
+
+.settings-transfer-status.is-error {
+    color: var(--error);
+}
+
 /* Адаптивная ширина для маленьких экранов (уже 320px) */

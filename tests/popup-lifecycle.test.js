@@ -117,6 +117,17 @@ test('popup показывает назначенный хоткей и откр
   assert.equal(createdTabs[0].url, 'chrome://extensions/shortcuts');
 });
 
+test('popup использует штатную страницу хоткеев, если браузер предоставляет API', async () => {
+  const { context, createdTabs } = loadPopup(async () => ({ success: true }));
+  let opened = false;
+  context.chrome.commands.openShortcutSettings = async () => { opened = true; };
+
+  await context.openShortcutSettings();
+
+  assert.equal(opened, true);
+  assert.equal(createdTabs.length, 0);
+});
+
 test('операции с настройкой отчёта получают дедлайн раньше popup-таймаута', async () => {
   const messages = [];
   const { context } = loadPopup(async (_tabId, message) => {

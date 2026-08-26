@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Universal Auth Injector",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "permissions": ["storage", "webNavigation", "tabs"],
   "action": {
     "default_popup": "popup/popup.html",

@@ -485,3 +485,36 @@ test('игнорирует повреждённые координаты AST и 
 
   assert.equal(model.expandFormula('root').formula, '=(2)+1');
 });
+
+test('собирает уникальные DP-источники через вложенные и Merge-переменные', () => {
+  const model = FormulaBrowserCore.createModel([
+    {
+      id: 'root', name: 'Root', varType: 'General',
+      parsedFormula: { root: { nodeType: 'function', args: [
+        { nodeType: 'var', varId: 'nested', literal: 'Nested' },
+        { nodeType: 'var', varId: 'merge', literal: 'Merge' },
+      ] } },
+    },
+    {
+      id: 'nested', name: 'Nested', varType: 'FutureType',
+      parsedFormula: { root: { nodeType: 'function', args: [
+        { nodeType: 'var', varId: 'dp-a', literal: 'A' },
+        { nodeType: 'var', varId: 'root', literal: 'Root' },
+      ] } },
+    },
+    { id: 'dp-a', name: 'A', varType: 'DP', dp_id: 'DP1' },
+    { id: 'merge', name: 'Merge', varType: 'Merge', merge: [
+      { dp_id: 'DP1', dpObject_id: 'DP1.1' },
+      { dp_id: 'DP2', dpObject_id: 'DP2.2' },
+    ] },
+  ], [
+    { dp_id: 'DP1', dpName: 'Продажи' },
+    { dp_id: 'DP2', dpName: 'Возвраты' },
+  ]);
+
+  assert.deepEqual(model.getDependencySources('root'), [
+    { dpId: 'DP1', dpName: 'Продажи', objectId: 'DP1.1' },
+    { dpId: 'DP2', dpName: 'Возвраты', objectId: 'DP2.2' },
+    { dpId: 'DP1', dpName: 'Продажи', objectId: 'dp-a' },
+  ]);
+});

@@ -2,6 +2,23 @@
   'use strict';
 
   const core = globalThis.FormulaBrowserCore;
+  const GROUPING_STORAGE_KEY = 'formulaBrowserVariableGrouping';
+  const TYPE_ICON_PATHS = {
+    dimension: [
+      'M13.3333 11.9531V13H3V2.66667L4 2.66678L2 0L0 2.66667H1V15H13.3333V16L16 14L13.3333 11.9531Z',
+      'M5 11H14V2H5V11ZM7 4H12V9H7V4Z',
+    ],
+    measure: [
+      'M11 5L0 16H11V5ZM5 14L9 10V14H5Z',
+      'M12 16V0H14V1H16V3H14V5H16V7H14V9H16V11H14V13H16V15H14V16H12Z',
+    ],
+    attribute: [
+      'M2 0L4 3H3V10H1V3H0L2 0Z',
+      'M13 13V12L16 14L13 16V15H6V13H13Z',
+      'M7 11H13V3H5V9H7V11ZM7 5H11V9H7V5Z',
+      'M1.6 12H2.4V13.6H4V14.4H2.4V16H1.6V14.4H0V13.6H1.6V12Z',
+    ],
+  };
   if (!core) {
     console.error('[Auth Injector] FormulaBrowserCore не загружен');
     return;
@@ -20,6 +37,8 @@
     history: [],
     historyIndex: -1,
     sidebarTab: 'variables',
+    variableGrouping: 'request',
+    groupingLoaded: false,
     popover: null,
     maximized: false,
     restoreRect: null,
@@ -50,6 +69,7 @@
       state.positioned = true;
     }
     state.shadow.getElementById('fb-search').focus();
+    if (!state.groupingLoaded) await loadGroupingPreference();
     if (!state.loaded && !state.loading) await loadData();
   }
 
@@ -109,6 +129,10 @@
             </div>
             <section id="fb-variables-panel" class="fb-sidebar-panel" role="tabpanel">
               <input id="fb-list-filter" class="fb-list-filter" autocomplete="off" placeholder="Фильтр списка…" />
+              <div class="fb-list-grouping" role="group" aria-label="Группировка переменных">
+                <button id="fb-group-request" class="fb-group-button is-active" type="button">По запросам</button>
+                <button id="fb-group-alphabet" class="fb-group-button" type="button">По алфавиту</button>
+              </div>
               <div id="fb-variable-list" class="fb-sidebar-list">
                 <div class="fb-sidebar-empty">Загрузка…</div>
               </div>
@@ -149,11 +173,14 @@
     $('fb-tab-variables').addEventListener('click', () => setSidebarTab('variables'));
     $('fb-tab-history').addEventListener('click', () => setSidebarTab('history'));
     $('fb-list-filter').addEventListener('input', renderVariableList);
+    $('fb-group-request').addEventListener('click', () => setVariableGrouping('request'));
+    $('fb-group-alphabet').addEventListener('click', () => setVariableGrouping('alphabet'));
 
     state.panel.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        hideBrowser();
+        if (state.popover) dismissVariablePopover();
+        else hideBrowser();
       } else if (event.altKey && event.key === 'ArrowLeft') {
         event.preventDefault();
         goBack();
@@ -468,6 +495,36 @@
     state.shadow.getElementById('fb-history-panel').hidden = variablesActive;
   }
 
+  async function loadGroupingPreference() {
+    state.groupingLoaded = true;
+    try {
+      const stored = await chrome.storage.sync.get(GROUPING_STORAGE_KEY);
+      const grouping = stored?.[GROUPING_STORAGE_KEY];
+      setVariableGrouping(grouping === 'alphabet' ? 'alphabet' : 'request', false);
+    } catch {
+      setVariableGrouping('request', false);
+    }
+  }
+
+  function setVariableGrouping(grouping, persist = true) {
+    state.variableGrouping = grouping === 'alphabet' ? 'alphabet' : 'request';
+    if (!state.shadow) return;
+    state.shadow.getElementById('fb-group-request').classList.toggle(
+      'is-active',
+      state.variableGrouping === 'request',
+    );
+    state.shadow.getElementById('fb-group-alphabet').classList.toggle(
+      'is-active',
+      state.variableGrouping === 'alphabet',
+    );
+    renderVariableList();
+    if (persist) {
+      chrome.storage.sync.set({ [GROUPING_STORAGE_KEY]: state.variableGrouping }).catch(() => {
+        setStatus('Не удалось сохранить режим группировки', 'warning');
+      });
+    }
+  }
+
   function renderVariableList() {
     if (!state.shadow) return;
     const target = state.shadow.getElementById('fb-variable-list');
@@ -484,7 +541,11 @@
     const regular = matches.filter((variable) => variable.varType !== 'Formula');
     const anonymous = matches.filter((variable) => variable.varType === 'Formula');
 
-    target.appendChild(variableListGroup(`Переменные · ${regular.length}`, regular));
+    if (state.variableGrouping === 'alphabet') {
+      target.appendChild(variableListGroup('Все переменные', regular));
+    } else {
+      renderRequestGroups(target, regular);
+    }
     const anonymousGroup = element('details', 'fb-anonymous-group');
     anonymousGroup.open = Boolean(filter);
     anonymousGroup.appendChild(element('summary', '', `Анонимные формулы · ${anonymous.length}`));
@@ -495,9 +556,58 @@
     target.appendChild(anonymousGroup);
   }
 
-  function variableListGroup(title, variables) {
-    const group = element('section', 'fb-variable-group');
-    group.appendChild(element('div', 'fb-sidebar-heading', title));
+  function renderRequestGroups(target, variables) {
+    const directDpVariables = variables.filter((variable) => variable.varType === 'DP');
+    const knownDpIds = new Set(state.dps.map((dp) => String(dp.dp_id)));
+    let renderedGroups = 0;
+
+    state.dps.forEach((dp) => {
+      const group = directDpVariables.filter(
+        (variable) => String(variable.dp_id) === String(dp.dp_id),
+      );
+      if (!group.length) return;
+      target.appendChild(variableListGroup(dp.dpName || dp.dp_id, group, dp.dp_id));
+      renderedGroups += 1;
+    });
+
+    const unknownDps = new Map();
+    directDpVariables.forEach((variable) => {
+      const dpId = hasUsableId(variable.dp_id) ? String(variable.dp_id) : 'Без DP';
+      if (knownDpIds.has(dpId)) return;
+      const group = unknownDps.get(dpId) || [];
+      group.push(variable);
+      unknownDps.set(dpId, group);
+    });
+    unknownDps.forEach((group, dpId) => {
+      target.appendChild(variableListGroup(dpId, group, 'Источник не найден в REP.GET_DP_LIST'));
+      renderedGroups += 1;
+    });
+
+    const merge = variables.filter((variable) => variable.varType === 'Merge');
+    if (merge.length) {
+      target.appendChild(variableListGroup('Объединённые переменные', merge));
+      renderedGroups += 1;
+    }
+    const general = variables.filter(
+      (variable) => variable.varType !== 'DP' && variable.varType !== 'Merge',
+    );
+    if (general.length) {
+      target.appendChild(variableListGroup('Пользовательские переменные', general));
+      renderedGroups += 1;
+    }
+    if (!renderedGroups) target.appendChild(element('div', 'fb-sidebar-empty', 'Нет совпадений'));
+  }
+
+  function variableListGroup(title, variables, subtitle = '') {
+    const group = element('details', 'fb-variable-group');
+    group.open = true;
+    const summary = element('summary', 'fb-sidebar-heading');
+    summary.append(
+      element('span', '', title),
+      element('span', 'fb-group-count', String(variables.length)),
+    );
+    if (subtitle) summary.title = subtitle;
+    group.appendChild(summary);
     const list = element('div', 'fb-variable-items');
     if (!variables.length) list.appendChild(element('div', 'fb-sidebar-empty', 'Нет совпадений'));
     else variables.forEach((variable) => list.appendChild(variableListButton(variable)));
@@ -515,7 +625,7 @@
       element(
         'span',
         'fb-sidebar-item-meta',
-        variable.varType === 'Formula' ? String(variable.id).slice(0, 8) : variable.varType || 'Unknown',
+        cardinalityLabel(variable.type),
       ),
     );
     button.title = `${variable.id} · ${variable.type || 'неизвестный type'} · ${variable.varType || 'неизвестный varType'}`;
@@ -688,9 +798,9 @@
     } else {
       const list = element('div', 'fb-dependency-list');
       dependencies.forEach((variable) => {
-        const button = element('button', 'fb-dependency', variable.name || variable.id);
+        const button = element('button', 'fb-dependency');
         button.type = 'button';
-        button.appendChild(typeDot(variable.type));
+        button.append(typeDot(variable.type), element('span', '', variable.name || variable.id));
         button.addEventListener('click', () => navigate({ kind: 'variable', id: variable.id }));
         list.appendChild(button);
       });
@@ -714,7 +824,7 @@
         const zoneToggle = element('label', 'fb-zone-toggle');
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
-        checkbox.checked = true;
+        checkbox.checked = false;
         zoneToggle.append(checkbox, element('span', '', 'Зонирование по исходным переменным'));
         controls.append(
           zoneToggle,
@@ -940,12 +1050,15 @@
     validZones.forEach((zone, index) => {
       appendFormulaTokens(block, tokens, cursor, zone.start);
       const wrapper = element('span', `fb-origin-zone fb-zone-${index % 6}`);
-      const label = element('button', 'fb-origin-label', zone.label || zone.variableId);
-      label.type = 'button';
-      label.title = `Открыть переменную ${zone.label || zone.variableId}`;
-      label.addEventListener('click', () => navigate({ kind: 'variable', id: zone.variableId }));
       const code = element('span', 'fb-origin-code');
       appendFormulaTokens(code, tokens, zone.start, zone.start + zone.length);
+      const label = element('button', 'fb-origin-label', zone.label || zone.variableId);
+      label.type = 'button';
+      label.title = `Информация о переменной ${zone.label || zone.variableId}`;
+      label.addEventListener('click', (event) => {
+        event.stopPropagation();
+        showVariablePopover(label, [zone.variableId], zone.label || zone.variableId);
+      });
       wrapper.append(label, code);
       block.appendChild(wrapper);
       cursor = zone.start + zone.length;
@@ -991,14 +1104,10 @@
     node.title = candidateIds.length > 1
       ? `Найдено одноимённых переменных: ${candidateIds.length}`
       : 'Открыть переменную';
-    node.addEventListener('click', () => {
-      if (token.variableId) {
-        navigate({ kind: 'variable', id: token.variableId });
-      } else if (candidateIds.length === 1) {
-        navigate({ kind: 'variable', id: candidateIds[0] });
-      } else {
-        showVariablePopover(node, candidateIds, text);
-      }
+    node.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const ids = token.variableId ? [token.variableId] : candidateIds;
+      showVariablePopover(node, ids, text);
     });
     return node;
   }
@@ -1006,31 +1115,51 @@
   function showVariablePopover(anchor, candidateIds, label) {
     dismissVariablePopover();
     const popover = element('div', 'fb-variable-popover');
+    const uniqueCandidateIds = [...new Set(candidateIds)];
     const header = element('div', 'fb-popover-header');
     header.append(
       element('strong', '', label),
-      element('span', 'fb-muted', 'Выберите одноимённую переменную'),
+      element(
+        'span',
+        'fb-muted',
+        uniqueCandidateIds.length > 1 ? 'Выберите одноимённую переменную' : 'Сведения о переменной',
+      ),
     );
     const close = element('button', 'fb-popover-close', '×');
     close.type = 'button';
     close.title = 'Закрыть';
     close.addEventListener('click', dismissVariablePopover);
     popover.append(header, close);
-    candidateIds.forEach((id) => {
+    uniqueCandidateIds.forEach((id) => {
       const variable = state.variablesById.get(id);
       if (!variable) return;
-      const button = element('button', 'fb-popover-option');
-      button.type = 'button';
-      button.append(
+      const variableCard = element('section', 'fb-popover-card');
+      const variableHeading = element('div', 'fb-popover-variable-heading');
+      variableHeading.append(
         typeDot(variable.type),
-        element('span', '', variableLabel(variable)),
-        element('small', '', `${variable.varType || 'Unknown'} · ${variable.id}`),
+        element('strong', '', variableLabel(variable)),
+        element('code', '', variable.id),
       );
-      button.addEventListener('click', () => {
+      const meta = element('dl', 'fb-popover-meta');
+      appendDefinition(meta, 'Тип', variable.varType || 'Unknown');
+      appendDefinition(meta, 'Кардинальность', cardinalityLabel(variable.type));
+      appendDefinition(meta, 'Данные', variable.dataType || '—');
+      const sources = state.model.getDependencySources(variable.id);
+      appendDefinition(
+        meta,
+        'DP',
+        sources.length
+          ? sources.map((source) => `${source.dpName || source.dpId} · ${source.objectId || '—'}`).join('\n')
+          : 'Нет достижимого DP-источника',
+      );
+      const open = element('button', 'fb-popover-open', 'Открыть переменную');
+      open.type = 'button';
+      open.addEventListener('click', () => {
         dismissVariablePopover();
         navigate({ kind: 'variable', id });
       });
-      popover.appendChild(button);
+      variableCard.append(variableHeading, meta, open);
+      popover.appendChild(variableCard);
     });
     state.panel.appendChild(popover);
     state.popover = popover;
@@ -1054,6 +1183,13 @@
     state.popover = null;
   }
 
+  function appendDefinition(list, term, description) {
+    list.append(
+      element('dt', '', term),
+      element('dd', '', description),
+    );
+  }
+
   function typeBadge(type) {
     const normalized = normalizeTypeClass(type);
     return element('span', `fb-badge fb-type-${normalized}`, type || 'Variable');
@@ -1068,7 +1204,23 @@
   }
 
   function typeDot(type) {
-    return element('span', `fb-type-dot fb-type-${normalizeTypeClass(type)}`);
+    const normalized = normalizeTypeClass(type);
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.classList.add('fb-type-icon', `fb-icon-${normalized}`);
+    const paths = TYPE_ICON_PATHS[normalized] || ['M8 1L15 8L8 15L1 8L8 1ZM7 5H9V9H7V5ZM7 11H9V13H7V11Z'];
+    paths.forEach((data) => {
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', data);
+      path.setAttribute('fill', 'currentColor');
+      svg.appendChild(path);
+    });
+    return svg;
+  }
+
+  function cardinalityLabel(type) {
+    return typeof type === 'string' && type.length ? type : 'Unknown';
   }
 
   function normalizeTypeClass(type) {
@@ -1108,6 +1260,9 @@
       * { box-sizing: border-box; }
       button, input, textarea { font: inherit; }
       button { -webkit-tap-highlight-color: transparent; }
+      button:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
+        outline: 2px solid rgba(65, 112, 153, .34); outline-offset: 1px;
+      }
       .fb-window {
         position: absolute;
         left: 50%;
@@ -1137,15 +1292,15 @@
         justify-content: space-between;
         padding: 0 10px 0 16px;
         color: white;
-        background: linear-gradient(120deg, #183a4e, #1e4f6a);
+        background: #244957;
         cursor: move;
         user-select: none;
       }
       .fb-title { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 650; }
       .fb-logo {
         display: grid; place-items: center; width: 27px; height: 27px; border-radius: 7px;
-        background: linear-gradient(199.32deg, #1ae3d7 -13.92%, #0945df 111.71%);
-        font-family: Georgia, serif; font-size: 19px; font-style: italic; box-shadow: 0 2px 8px rgba(0,0,0,.2);
+        background: rgba(255,255,255,.13); color: #e8f1f4;
+        font-family: Georgia, serif; font-size: 19px; font-style: italic;
       }
       .fb-window-actions { display: flex; gap: 4px; }
       .fb-icon-button {
@@ -1197,21 +1352,30 @@
       .fb-sidebar-tab.is-active { border-color: #bcd0ec; background: #eaf2fd; color: #255da9; }
       .fb-sidebar-panel { min-height: 0; overflow: auto; padding: 9px 8px 12px; }
       .fb-list-filter { position: sticky; top: 0; z-index: 1; margin-bottom: 9px; box-shadow: 0 4px 10px rgba(248,250,252,.95); }
+      .fb-list-grouping { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin: 0 0 10px; padding: 2px; border: 1px solid #d8e0e8; border-radius: 7px; background: #edf1f5; }
+      .fb-group-button { min-height: 27px; padding: 2px 5px; border: 0; border-radius: 5px; background: transparent; color: #687587; font-size: 10px; cursor: pointer; }
+      .fb-group-button:hover { color: #334155; }
+      .fb-group-button.is-active { background: #fff; color: #315f8d; box-shadow: 0 1px 2px rgba(15,23,42,.09); }
       .fb-sidebar-list { display: grid; gap: 9px; }
       .fb-variable-group, .fb-variable-items { display: grid; gap: 3px; }
-      .fb-sidebar-heading { padding: 3px 6px; color: #718096; font-size: 10px; font-weight: 750; letter-spacing: .05em; text-transform: uppercase; }
+      .fb-variable-group > summary { list-style: none; cursor: pointer; }
+      .fb-variable-group > summary::-webkit-details-marker { display: none; }
+      .fb-variable-group > summary::before { content: '▸'; display: inline-block; width: 11px; color: #8a96a6; transform: rotate(0); transition: transform .12s; }
+      .fb-variable-group[open] > summary::before { transform: rotate(90deg); }
+      .fb-sidebar-heading { display: flex; align-items: center; gap: 5px; padding: 4px 5px; color: #687587; font-size: 10px; font-weight: 700; letter-spacing: .025em; }
+      .fb-group-count { margin-left: auto; min-width: 20px; color: #96a0ae; font-variant-numeric: tabular-nums; text-align: right; }
       .fb-anonymous-group { border-top: 1px solid #e2e8f0; padding-top: 7px; }
       .fb-anonymous-group > summary { padding: 5px 6px; color: #64748b; font-size: 11px; font-weight: 700; cursor: pointer; }
       .fb-anonymous-group .fb-variable-items { margin-top: 4px; }
       .fb-sidebar-item {
-        width: 100%; min-width: 0; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto;
-        align-items: center; gap: 7px; padding: 7px 7px; border: 1px solid transparent; border-radius: 7px;
+        width: 100%; min-width: 0; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto;
+        align-items: center; gap: 6px; padding: 5px 6px; border: 1px solid transparent; border-radius: 5px;
         background: transparent; color: #334155; text-align: left; cursor: pointer;
       }
-      .fb-sidebar-item:hover { border-color: #d5e0ed; background: #fff; }
-      .fb-sidebar-item.is-current { border-color: #a9c5e9; background: #eaf2fd; color: #174f91; }
-      .fb-sidebar-item-main { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .fb-sidebar-item-meta { color: #8a97aa; font-size: 9px; white-space: nowrap; }
+      .fb-sidebar-item:hover { border-color: transparent; background: #e9eef4; }
+      .fb-sidebar-item.is-current { border-color: #b7cbe0; background: #e4edf7; color: #254f78; }
+      .fb-sidebar-item-main { min-width: 0; overflow: hidden; font-family: 'Roboto Condensed', Roboto, sans-serif; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+      .fb-sidebar-item-meta { color: #8a97aa; font-size: 8px; letter-spacing: .02em; white-space: nowrap; }
       .fb-sidebar-empty { padding: 12px 7px; color: #8492a6; font-size: 11px; text-align: center; }
       .fb-history-item { grid-template-columns: 22px minmax(0, 1fr) auto; }
       .fb-history-index { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; background: #e9eef5; color: #64748b; font-size: 10px; font-variant-numeric: tabular-nums; }
@@ -1225,13 +1389,12 @@
       .fb-eyebrow { color: #2b6dd0; font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
       .fb-id { color: #78869a; font-family: "Cascadia Code", Consolas, monospace; font-size: 11px; overflow-wrap: anywhere; }
       .fb-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
-      .fb-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 2px 9px; border-radius: 999px; color: white; background: linear-gradient(135deg, #8b95a5, #485365); font-size: 11px; font-weight: 700; }
+      .fb-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 2px 9px; border-radius: 999px; color: #556171; background: #edf1f5; font-size: 11px; font-weight: 650; }
       .fb-badge-neutral { color: #475569; background: #edf1f5; }
       .fb-badge-success { color: #17663c; background: #daf4e5; }
-      .fb-type-variable, .fb-type-formula, .fb-type-const, .fb-type-unknown { background: linear-gradient(135deg, #8b95a5, #485365); }
-      .fb-type-dimension { background: linear-gradient(135deg, #1ae3d7, #0945df); }
-      .fb-type-attribute { background: linear-gradient(180deg, #19b400, #09492a); }
-      .fb-type-measure { background: linear-gradient(135deg, #ffc700, #df0909); }
+      .fb-badge.fb-type-dimension { color: #356b9c; background: #e9f2fa; }
+      .fb-badge.fb-type-attribute { color: #477652; background: #edf6ef; }
+      .fb-badge.fb-type-measure { color: #8a622d; background: #faf2e7; }
       .fb-code {
         margin: 0; padding: 11px 12px; overflow: auto; border: 1px solid #dce5f0; border-radius: 8px;
         background: #f6f8fb; color: #1e293b; font-family: "Cascadia Code", Consolas, monospace;
@@ -1246,32 +1409,36 @@
       .fb-token-identifier { color: #704c16; }
       .fb-token-unhighlighted { color: #64748b; }
       .fb-formula-variable {
-        display: inline; margin: 0; padding: 1px 4px; border: 1px solid transparent; border-radius: 5px;
-        color: #fff; font: inherit; font-weight: 650; line-height: inherit; cursor: pointer; box-decoration-break: clone;
+        display: inline; margin: 0; padding: 0 1px; border: 0; border-radius: 3px;
+        background: transparent; color: #526579; font: inherit; font-weight: 600; line-height: inherit; cursor: pointer;
       }
-      .fb-formula-variable:hover { filter: brightness(1.07); box-shadow: 0 0 0 2px rgba(43,109,208,.17); }
-      .fb-formula-variable.is-missing { border-color: #cbd5e1; background: #eef1f5; color: #64748b; cursor: help; }
+      .fb-formula-variable.fb-type-dimension { color: #4777a4; }
+      .fb-formula-variable.fb-type-attribute { color: #568063; }
+      .fb-formula-variable.fb-type-measure { color: #9a713d; }
+      .fb-formula-variable:hover { background: rgba(71,119,164,.09); text-decoration: underline; text-underline-offset: 2px; }
+      .fb-formula-variable:focus-visible { background: rgba(71,119,164,.09); outline-color: rgba(71,119,164,.45); }
+      .fb-formula-variable.is-missing { color: #7d8793; text-decoration: underline dotted; cursor: help; }
       .fb-origin-zone {
         display: inline-flex; flex-direction: column; vertical-align: middle; margin: 9px 2px 2px;
-        border: 1px solid #9fc5df; border-radius: 7px; background: rgba(219,239,252,.48);
+        border: 1px solid #c5d6e2; border-radius: 5px; background: rgba(235,242,247,.7);
       }
       .fb-origin-label {
         max-width: 210px; margin: -10px 4px 0; padding: 1px 5px; overflow: hidden; border: 0; border-radius: 4px;
-        background: #3f7fa8; color: #fff; font: 600 9px/1.4 Inter, Roboto, sans-serif;
+        border: 1px solid #c5d6e2; background: #f5f8fa; color: #557186; font: 600 9px/1.4 Inter, Roboto, sans-serif;
         text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
       }
       .fb-origin-label:hover { text-decoration: underline; }
       .fb-origin-code { padding: 1px 4px 2px; }
-      .fb-zone-1 { border-color: #d6b06b; background: rgba(255,237,197,.52); }
-      .fb-zone-1 .fb-origin-label { background: #a87825; }
-      .fb-zone-2 { border-color: #91c89e; background: rgba(222,246,226,.52); }
-      .fb-zone-2 .fb-origin-label { background: #478555; }
-      .fb-zone-3 { border-color: #bea3d8; background: rgba(238,226,250,.52); }
-      .fb-zone-3 .fb-origin-label { background: #76539a; }
-      .fb-zone-4 { border-color: #dda3a9; background: rgba(252,228,231,.52); }
-      .fb-zone-4 .fb-origin-label { background: #a65b65; }
-      .fb-zone-5 { border-color: #8cc8c5; background: rgba(218,245,242,.52); }
-      .fb-zone-5 .fb-origin-label { background: #367e79; }
+      .fb-zone-1 { border-color: #ded1b9; background: rgba(248,244,234,.72); }
+      .fb-zone-1 .fb-origin-label { border-color: #ded1b9; color: #866f49; }
+      .fb-zone-2 { border-color: #c7d9cb; background: rgba(238,246,240,.72); }
+      .fb-zone-2 .fb-origin-label { border-color: #c7d9cb; color: #5b7862; }
+      .fb-zone-3 { border-color: #d5cbe0; background: rgba(245,241,248,.72); }
+      .fb-zone-3 .fb-origin-label { border-color: #d5cbe0; color: #71627f; }
+      .fb-zone-4 { border-color: #dfccce; background: rgba(249,242,243,.72); }
+      .fb-zone-4 .fb-origin-label { border-color: #dfccce; color: #806166; }
+      .fb-zone-5 { border-color: #c4d9d7; background: rgba(238,247,246,.72); }
+      .fb-zone-5 .fb-origin-label { border-color: #c4d9d7; color: #557976; }
       .fb-expansion-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
       .fb-zone-toggle { display: inline-flex; align-items: center; gap: 6px; color: #334155; font-weight: 600; cursor: pointer; }
       .fb-zone-toggle input { width: 15px; min-width: 15px; height: 15px; margin: 0; }
@@ -1281,7 +1448,10 @@
         border: 1px solid #d4deea; border-radius: 7px; background: #f8fafc; color: #244b7c; cursor: pointer;
       }
       .fb-dependency:hover { border-color: #93b4df; background: #eef5ff; }
-      .fb-type-dot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 3px; background: #7c8798; }
+      .fb-type-icon { flex: 0 0 auto; width: 16px; height: 16px; color: #7e8996; }
+      .fb-icon-dimension { color: #3f75ad; }
+      .fb-icon-attribute { color: #4d805a; }
+      .fb-icon-measure { color: #a8752f; }
       .fb-expansion summary { color: #255da9; font-weight: 650; cursor: pointer; }
       .fb-expansion-body { display: grid; gap: 8px; margin-top: 10px; }
       .fb-warning { padding: 8px 10px; border-radius: 7px; background: #fff4d8; color: #855d00; }
@@ -1322,9 +1492,15 @@
       .fb-popover-header { display: grid; gap: 2px; padding: 0 30px 8px 2px; }
       .fb-popover-close { position: absolute; right: 7px; top: 6px; width: 27px; height: 27px; border: 0; border-radius: 6px; background: transparent; color: #64748b; font-size: 18px; cursor: pointer; }
       .fb-popover-close:hover { background: #edf2f7; }
-      .fb-popover-option { width: 100%; display: grid; grid-template-columns: 10px minmax(0, 1fr); gap: 2px 8px; align-items: center; padding: 8px; border: 0; border-top: 1px solid #edf1f5; background: #fff; color: #255da9; text-align: left; cursor: pointer; }
-      .fb-popover-option:hover { background: #eef5ff; }
-      .fb-popover-option small { grid-column: 2; color: #8492a6; overflow-wrap: anywhere; }
+      .fb-popover-card { display: grid; gap: 9px; padding: 10px 2px 4px; border-top: 1px solid #e4e9ef; }
+      .fb-popover-variable-heading { min-width: 0; display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 2px 7px; align-items: center; }
+      .fb-popover-variable-heading strong { min-width: 0; overflow-wrap: anywhere; color: #2f3d4d; }
+      .fb-popover-variable-heading code { grid-column: 2; overflow-wrap: anywhere; color: #8a95a3; font-size: 9px; }
+      .fb-popover-meta { display: grid; grid-template-columns: 105px minmax(0, 1fr); gap: 5px 9px; margin: 0; padding: 8px; border-radius: 6px; background: #f7f9fb; }
+      .fb-popover-meta dt { color: #7a8696; font-size: 10px; }
+      .fb-popover-meta dd { min-width: 0; margin: 0; color: #3e4b5b; font-size: 11px; white-space: pre-line; overflow-wrap: anywhere; }
+      .fb-popover-open { justify-self: end; min-height: 28px; padding: 3px 9px; border: 1px solid #c8d4df; border-radius: 5px; background: #fff; color: #3e668b; font-size: 11px; cursor: pointer; }
+      .fb-popover-open:hover { border-color: #9fb6ca; background: #f5f8fa; }
       @media (max-width: 820px) {
         .fb-window { min-width: calc(100vw - 24px); }
         .fb-workspace { grid-template-columns: 205px minmax(0, 1fr); }

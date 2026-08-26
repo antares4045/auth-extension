@@ -164,6 +164,34 @@
       return null;
     }
 
+    function getDependencySources(variableId, options = {}) {
+      const maxNodes = Number.isFinite(options.maxNodes)
+        ? Math.max(0, Math.floor(options.maxNodes))
+        : 2000;
+      const stack = [variableId];
+      const visited = new Set();
+      const sources = new Map();
+
+      while (stack.length && visited.size < maxNodes) {
+        const currentId = stack.pop();
+        if (visited.has(currentId)) continue;
+        visited.add(currentId);
+        const sourceInfo = getSourceInfo(currentId);
+        if (sourceInfo) {
+          sourceInfo.sources.forEach((source) => {
+            const key = `${source.dpId}\u0000${source.objectId || ''}`;
+            if (!sources.has(key)) sources.set(key, source);
+          });
+          continue;
+        }
+        getDependencies(currentId).forEach((dependency) => {
+          if (!visited.has(dependency.id)) stack.push(dependency.id);
+        });
+      }
+
+      return Array.from(sources.values());
+    }
+
     function addWarning(warnings, warning) {
       if (!warnings.includes(warning)) warnings.push(warning);
     }
@@ -542,6 +570,7 @@
       expandFormulaDetailed,
       expandFormula,
       findVariable,
+      getDependencySources,
       getDependencies,
       getSourceInfo,
       tokenizeFormula,

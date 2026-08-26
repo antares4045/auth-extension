@@ -37,7 +37,7 @@ const encodeFormBody = (fields) => Object.entries(fields)
     .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
     .join('&');
 const DEFAULT_BRIDGE_TIMEOUT_MS = 30000;
-const REPORT_SETTING_TIMEOUT_MS = 8000;
+const REPORT_SETTING_TIMEOUT_MS = 5000;
 
 const requestToBridge = async (
     command,
@@ -80,7 +80,18 @@ const requestToBridge = async (
         };
 
         try {
-            return await fetch(apiUrl, requestOptions);
+            const response = await fetch(apiUrl, requestOptions);
+            const responseText = await response.text();
+            return {
+                ok: response.ok,
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers,
+                url: response.url,
+                redirected: response.redirected,
+                text: async () => responseText,
+                json: async () => JSON.parse(responseText),
+            };
         } catch (error) {
             if (!controller.signal.aborted) throw error;
             if (timedOut) {

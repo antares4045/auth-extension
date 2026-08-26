@@ -69,24 +69,38 @@ test('API-мост отменяет зависший запрос по тайм�
       sendMessage: () => {},
     },
   };
-  global.fetch = (url, options) => new Promise((resolve, reject) => {
-    options.signal.addEventListener('abort', () => {
-      const error = new Error('aborted');
-      error.name = 'AbortError';
-      reject(error);
-    }, { once: true });
+  global.fetch = async (url, options) => ({
+    ok: true,
+    status: 200,
+    text: () => new Promise((resolve, reject) => {
+      options.signal.addEventListener('abort', () => {
+        const error = new Error('aborted');
+        error.name = 'AbortError';
+        reject(error);
+      }, { once: true });
+    }),
   });
 
   delete require.cache[require.resolve('../content/content.js')];
   require('../content/content.js');
 
-  await assert.rejects(
-    global.AuthInjectorBridge.requestJson(
+  const request = global.AuthInjectorBridge.requestJson(
       'REP.GET_VARIABLES',
       {},
       false,
       { timeoutMs: 5 },
+    );
+  const result = await Promise.race([
+    request.then(
+      () => ({ settled: true, error: null }),
+      (error) => ({ settled: true, error }),
     ),
-    /превышено время ожидания/,
-  );
+    new Promise((resolve) => setTimeout(
+      () => resolve({ settled: false, error: null }),
+      50,
+    )),
+  ]);
+
+  assert.equal(result.settled, true, 'таймаут не охватил чтение тела ответа');
+  assert.match(String(result.error), /превышено время ожидания/);
 });

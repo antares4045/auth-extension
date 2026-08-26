@@ -342,8 +342,13 @@
             }
             return { response, error: null };
           })
-          .catch((error) => ({ response: { dps: [] }, error })),
+          .catch((error) => {
+            if (controller.signal.aborted) throw error;
+            return { response: { dps: [] }, error };
+          }),
       ]);
+
+      if (controller.signal.aborted || state.loadController !== controller) return;
 
       if (variablesResponse.result !== 1 || !Array.isArray(variablesResponse.variables)) {
         throw new Error('REP.GET_VARIABLES не вернул список переменных');

@@ -1,0 +1,65 @@
+name: Release CRX
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    environment: release
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Restore signing key
+        id: signing-key
+        shell: pwsh
+        env:
+          EXTENSION_PEM_B64: ${{ secrets.EXTENSION_PEM_B64 }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:EXTENSION_PEM_B64)) {
+            throw 'The release environment secret EXTENSION_PEM_B64 is not configured.'
+          }
+
+          $keyPath = Join-Path $env:RUNNER_TEMP 'universal-auth-injector.pem'
+          [IO.File]::WriteAllBytes(
+            $keyPath,
+            [Convert]::FromBase64String($env:EXTENSION_PEM_B64)
+          )
+          "path=$keyPath" >> $env:GITHUB_OUTPUT
+
+      - name: Pack CRX
+        id: package
+        shell: pwsh
+        run: |
+          $version = (Get-Content -Raw manifest.json | ConvertFrom-Json).version
+          ./tools/pack-extension.ps1 `
+            -KeyPath '${{ steps.signing-key.outputs.path }}' `
+            -OutputDirectory './dist'
+
+          $artifactPath = "dist/universal-auth-injector-$version.crx"
+          if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
+            throw "Expected release artifact was not created: $artifactPath"
+          }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "artifact=$artifactPath" >> $env:GITHUB_OUTPUT
+
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.package.outputs.version }}
+          ARTIFACT: ${{ steps.package.outputs.artifact }}
+        run: |
+          gh release create "v$env:VERSION" "$env:ARTIFACT" `
+            --target "$env:GITHUB_SHA" `
+            --title "v$env:VERSION" `
+            --generate-notes `
+            --latest

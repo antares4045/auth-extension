@@ -32,21 +32,26 @@ function onFinish(state) {
 
 var apiUrl;
 const tokenKey = "token";
+const encodeFormBody = (fields) => Object.entries(fields)
+    .filter(([, value]) => value !== undefined && value !== null)
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+    .join('&');
+
 const requestToBridge  =  (command, params=null, useReceives=false) => {
         const myHeaders = new Headers();
         myHeaders.append("Content-Type", "application/x-www-form-urlencoded");
 
-        const urlencoded = new URLSearchParams();
-        urlencoded.append("code", command);
-        urlencoded.append("token", localStorage.getItem(tokenKey));
-
-        if(useReceives){
-            urlencoded.append("receiver", sessionStorage.getItem("receiver"));
-            urlencoded.append("streamreceiver", sessionStorage.getItem("streamreceiver"));
-        }
-
-        if(params)
-            urlencoded.append("params", JSON.stringify(params));
+        // URLSearchParams кодирует пробел как "+". Старый REP bridge ожидает
+        // percent-encoding (%20), в том числе внутри JSON-поля params.
+        const urlencoded = encodeFormBody({
+            code: command,
+            // CMS.INIT_APP исторически получает token=null до авторизации.
+            token: localStorage.getItem(tokenKey) ?? 'null',
+            format: 'JSON',
+            receiver: useReceives ? sessionStorage.getItem("receiver") : null,
+            streamreceiver: useReceives ? sessionStorage.getItem("streamreceiver") : null,
+            params: params ? JSON.stringify(params) : null,
+        });
 
         const requestOptions = {
             method: "POST",

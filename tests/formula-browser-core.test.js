@@ -385,3 +385,103 @@ test('обходит повреждённый циклический AST без 
     { id: 'a', literal: 'A', start: undefined, length: undefined },
   ]);
 });
+
+test('разбивает формулу на синтаксические токены и сохраняет точный varId из AST', () => {
+  const variables = [
+    { id: 'income', name: 'Доход с НДС', type: 'Measure', varType: 'DP' },
+  ];
+  const root = {
+    nodeType: 'function',
+    args: [{
+      nodeType: 'var',
+      varId: 'income',
+      literal: 'Доход с НДС',
+      start: 4,
+      length: 13,
+    }],
+  };
+  const model = FormulaBrowserCore.createModel(variables, []);
+
+  assert.deepEqual(
+    model.tokenizeFormula("=if([Доход с НДС]>10,'[не переменная]',0)", root)
+      .filter((token) => token.kind !== 'whitespace'),
+    [
+      { kind: 'operator', text: '=', start: 0, length: 1 },
+      { kind: 'function', text: 'if', start: 1, length: 2 },
+      { kind: 'punctuation', text: '(', start: 3, length: 1 },
+      {
+        kind: 'variable', text: '[Доход с НДС]', start: 4, length: 13,
+        variableId: 'income', candidateIds: ['income'], variableType: 'Measure',
+      },
+      { kind: 'operator', text: '>', start: 17, length: 1 },
+      { kind: 'number', text: '10', start: 18, length: 2 },
+      { kind: 'punctuation', text: ',', start: 20, length: 1 },
+      { kind: 'string', text: "'[не переменная]'", start: 21, length: 17 },
+      { kind: 'punctuation', text: ',', start: 38, length: 1 },
+      { kind: 'number', text: '0', start: 39, length: 1 },
+      { kind: 'punctuation', text: ')', start: 40, length: 1 },
+    ],
+  );
+});
+
+test('находит ссылки по имени в раскрытой формуле и не ломается на одноимённых переменных', () => {
+  const model = FormulaBrowserCore.createModel([
+    { id: 'a', name: 'Источник', type: 'Dimension', varType: 'DP' },
+    { id: 'b', name: 'Источник', type: 'Attribute', varType: 'FutureType' },
+  ], []);
+
+  const variable = model.tokenizeFormula('=[Источник]', null)[1];
+  assert.deepEqual(variable, {
+    kind: 'variable', text: '[Источник]', start: 1, length: 10,
+    variableId: null, candidateIds: ['a', 'b'], variableType: 'unknown',
+  });
+});
+
+test('возвращает зоны прямых переменных в координатах полностью раскрытой формулы', () => {
+  const variables = [
+    {
+      id: 'root', name: 'Root', formula: '=[Left]+[Right]',
+      parsedFormula: {
+        root: { nodeType: 'function', args: [
+          { nodeType: 'var', varId: 'left', literal: 'Left', start: 1, length: 6 },
+          { nodeType: 'var', varId: 'right', literal: 'Right', start: 8, length: 7 },
+        ] },
+      },
+    },
+    { id: 'left', name: 'Left', formula: '=1', parsedFormula: { root: null } },
+    { id: 'right', name: 'Right', formula: '=22', parsedFormula: { root: null } },
+  ];
+  const model = FormulaBrowserCore.createModel(variables, []);
+
+  assert.deepEqual(model.expandFormulaDetailed('root'), {
+    formula: '=(1)+(22)',
+    warnings: [],
+    zones: [
+      { start: 1, length: 3, variableId: 'left', label: 'Left' },
+      { start: 5, length: 4, variableId: 'right', label: 'Right' },
+    ],
+  });
+});
+
+test('поиск принимает имя с одной или двумя квадратными скобками', () => {
+  const model = FormulaBrowserCore.createModel([
+    { id: 'income', name: 'Доход с НДС' },
+  ], []);
+
+  assert.equal(model.findVariable('Доход с НДС').id, 'income');
+  assert.equal(model.findVariable('[Доход с НДС]').id, 'income');
+  assert.equal(model.findVariable('[Доход с НДС').id, 'income');
+  assert.equal(model.findVariable('Доход с НДС]').id, 'income');
+  assert.equal(model.findVariable('income').id, 'income');
+});
+
+test('игнорирует повреждённые координаты AST и находит ссылку по литералу', () => {
+  const model = FormulaBrowserCore.createModel([
+    { id: 'root', name: 'Root', formula: '=[Child]+1', parsedFormula: {
+      root: { nodeType: 'var', varId: 'child', literal: 'Child', start: 999, length: -4 },
+    } },
+    { id: 'child', name: 'Child', formula: '=2', parsedFormula: { root: null } },
+  ], []);
+
+  assert.equal(model.expandFormula('root').formula, '=(2)+1');
+});

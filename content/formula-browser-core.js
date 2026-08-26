@@ -42,6 +42,15 @@
     return value !== undefined && value !== null && String(value).trim().length > 0;
   }
 
+  function normalizeVariableQuery(value) {
+    return String(value || '')
+      .trim()
+      .replace(/^\[+/, '')
+      .replace(/\]+$/, '')
+      .trim()
+      .toLocaleLowerCase('ru');
+  }
+
   function createModel(variables = [], dps = []) {
     const validVariables = (Array.isArray(variables) ? variables : []).filter(
       (variable) =>
@@ -58,10 +67,32 @@
     const variablesById = new Map(
       validVariables.map((variable) => [variable.id, variable]),
     );
+    const variablesByName = new Map();
+    validVariables.forEach((variable) => {
+      if (typeof variable.name !== 'string' || !variable.name.length) return;
+      const matches = variablesByName.get(variable.name) || [];
+      matches.push(variable);
+      variablesByName.set(variable.name, matches);
+    });
     const dpsById = new Map(validDps.map((dp) => [dp.dp_id, dp]));
 
     function isTerminalVariable(variable) {
       return variable?.varType === 'DP' || variable?.varType === 'Merge';
+    }
+
+    function findVariable(query) {
+      const raw = String(query || '').trim();
+      if (!raw) return null;
+      const direct = variablesById.get(raw) || validVariables.find(
+        (variable) => String(variable.id) === raw,
+      );
+      if (direct) return direct;
+      const normalized = normalizeVariableQuery(raw);
+      return validVariables.find(
+        (variable) => normalizeVariableQuery(variable.name || variable.id) === normalized,
+      ) || validVariables.find(
+        (variable) => normalizeVariableQuery(variable.name || variable.id).includes(normalized),
+      ) || null;
     }
 
     function findUnquotedVariable(formula, literal, fromIndex) {
@@ -151,7 +182,7 @@
       };
     }
 
-    function expandReferences(formula, node, path, warnings, maxDepth, budget) {
+    function expandReferences(formula, node, path, warnings, maxDepth, budget, zones = null) {
       const references = collectReferences(node);
       const positionalReplacements = [];
       let fallbackCursor = 0;
@@ -195,17 +226,31 @@
             warnings,
             maxDepth,
             budget,
+            null,
           );
           if (expanded === null) return;
           nested = expanded.replace(/^=/, '');
         }
 
         const replacement = `(${nested})`;
-        if (Number.isInteger(reference.start) && Number.isInteger(reference.length)) {
+        const positionedText = Number.isInteger(reference.start) && Number.isInteger(reference.length)
+          ? formula.slice(reference.start, reference.start + reference.length)
+          : '';
+        const expectedText = reference.literal ? `[${reference.literal}]` : '';
+        const hasValidPosition = (
+          Number.isInteger(reference.start) && reference.start >= 0 &&
+          Number.isInteger(reference.length) && reference.length > 0 &&
+          reference.start + reference.length <= formula.length &&
+          positionedText.startsWith('[') && positionedText.endsWith(']') &&
+          (!expectedText || positionedText === expectedText)
+        );
+        if (hasValidPosition) {
           positionalReplacements.push({
             start: reference.start,
             length: reference.length,
             replacement,
+            variableId: dependency.id,
+            label: dependency.name || dependency.id,
           });
           fallbackCursor = Math.max(fallbackCursor, reference.start + reference.length);
         } else {
@@ -214,14 +259,22 @@
           const start = findUnquotedVariable(formula, literal, fallbackCursor);
           if (start < 0) return;
           const length = literal.length + 2;
-          positionalReplacements.push({ start, length, replacement });
+          positionalReplacements.push({
+            start,
+            length,
+            replacement,
+            variableId: dependency.id,
+            label: dependency.name || dependency.id,
+          });
           fallbackCursor = start + length;
         }
       });
 
+      const appliedReplacements = [];
       positionalReplacements
         .sort((a, b) => b.start - a.start)
-        .forEach(({ start, length, replacement }) => {
+        .forEach((item) => {
+          const { start, length, replacement } = item;
           if (formula.length - length + replacement.length > budget.maxLength) {
             addWarning(
               warnings,
@@ -230,12 +283,32 @@
             return;
           }
           formula = `${formula.slice(0, start)}${replacement}${formula.slice(start + length)}`;
+          appliedReplacements.push(item);
         });
+
+      if (zones) {
+        appliedReplacements
+          .map((item) => {
+            const shift = appliedReplacements.reduce((total, other) => (
+              other.start < item.start
+                ? total + other.replacement.length - other.length
+                : total
+            ), 0);
+            return {
+              start: item.start + shift,
+              length: item.replacement.length,
+              variableId: item.variableId,
+              label: item.label,
+            };
+          })
+          .sort((a, b) => a.start - b.start)
+          .forEach((zone) => zones.push(zone));
+      }
 
       return formula;
     }
 
-    function expandVariable(variable, path, warnings, maxDepth, budget) {
+    function expandVariable(variable, path, warnings, maxDepth, budget, zones = null) {
       let formula =
         variable.parsedFormula?.source ||
         variable.formula;
@@ -262,6 +335,7 @@
         warnings,
         maxDepth,
         budget,
+        zones,
       );
     }
 
@@ -273,8 +347,29 @@
       const maxDepth = options.maxDepth ?? 40;
       const budget = createExpansionBudget(options);
       return {
-        formula: expandVariable(variable, [variable.id], warnings, maxDepth, budget) ?? '',
+        formula: expandVariable(variable, [variable.id], warnings, maxDepth, budget, null) ?? '',
         warnings,
+      };
+    }
+
+    function expandFormulaDetailed(variableId, options = {}) {
+      const variable = variablesById.get(variableId);
+      if (!variable) {
+        return {
+          formula: '',
+          warnings: [`Переменная ${variableId} не найдена`],
+          zones: [],
+        };
+      }
+
+      const warnings = [];
+      const zones = [];
+      const maxDepth = options.maxDepth ?? 40;
+      const budget = createExpansionBudget(options);
+      return {
+        formula: expandVariable(variable, [variable.id], warnings, maxDepth, budget, zones) ?? '',
+        warnings,
+        zones,
       };
     }
 
@@ -293,21 +388,169 @@
         };
       }
       return {
-        formula: expandReferences(formula, node, [], warnings, maxDepth, budget),
+        formula: expandReferences(formula, node, [], warnings, maxDepth, budget, null),
         warnings,
       };
     }
 
+    function expandExpressionDetailed(formula, node, options = {}) {
+      const warnings = [];
+      const zones = [];
+      const maxDepth = options.maxDepth ?? 40;
+      const budget = createExpansionBudget(options);
+      if (formula.length > budget.maxLength) {
+        addWarning(
+          warnings,
+          `Достигнут предел длины раскрытой формулы (${budget.maxLength} символов)`,
+        );
+        return {
+          formula: formula.slice(0, budget.maxLength),
+          warnings,
+          zones,
+        };
+      }
+      return {
+        formula: expandReferences(formula, node, [], warnings, maxDepth, budget, zones),
+        warnings,
+        zones,
+      };
+    }
+
+    function tokenizeFormula(formula, node = null) {
+      const source = typeof formula === 'string' ? formula : String(formula ?? '');
+      const referencesByStart = new Map();
+      collectReferences(node).forEach((reference) => {
+        if (Number.isInteger(reference.start)) referencesByStart.set(reference.start, reference);
+      });
+      const tokens = [];
+      const push = (kind, start, end, extra = {}) => {
+        tokens.push({
+          kind,
+          text: source.slice(start, end),
+          start,
+          length: end - start,
+          ...extra,
+        });
+      };
+      const isIdentifierStart = (character) => /[\p{L}_]/u.test(character || '');
+      const isIdentifierPart = (character) => /[\p{L}\p{N}_.]/u.test(character || '');
+      let index = 0;
+
+      while (index < source.length) {
+        const start = index;
+        const character = source[index];
+
+        if (/\s/u.test(character)) {
+          while (index < source.length && /\s/u.test(source[index])) index += 1;
+          push('whitespace', start, index);
+          continue;
+        }
+
+        if (character === "'") {
+          index += 1;
+          while (index < source.length) {
+            if (source[index] !== "'") {
+              index += 1;
+              continue;
+            }
+            if (source[index + 1] === "'") {
+              index += 2;
+              continue;
+            }
+            index += 1;
+            break;
+          }
+          push('string', start, index);
+          continue;
+        }
+
+        if (character === '[') {
+          const close = source.indexOf(']', index + 1);
+          if (close >= 0) {
+            index = close + 1;
+            const literal = source.slice(start + 1, close);
+            const positionedReference = referencesByStart.get(start);
+            const exactReference = positionedReference && (
+              !positionedReference.literal || positionedReference.literal === literal
+            )
+              ? positionedReference
+              : null;
+            const namedMatches = variablesByName.get(literal) || [];
+            const exactVariable = exactReference
+              ? variablesById.get(exactReference.id)
+              : null;
+            const candidates = exactVariable ? [exactVariable] : namedMatches;
+            const variableId = exactVariable?.id || (candidates.length === 1 ? candidates[0].id : null);
+            push('variable', start, index, {
+              variableId,
+              candidateIds: candidates.map((variable) => variable.id),
+              variableType: variableId
+                ? variablesById.get(variableId)?.type || 'unknown'
+                : 'unknown',
+            });
+            continue;
+          }
+        }
+
+        if (/\d/u.test(character) || (character === '.' && /\d/u.test(source[index + 1] || ''))) {
+          index += 1;
+          while (index < source.length && /[\d.eE+-]/u.test(source[index])) {
+            const current = source[index];
+            if ((current === '+' || current === '-') && !/[eE]/u.test(source[index - 1])) break;
+            index += 1;
+          }
+          push('number', start, index);
+          continue;
+        }
+
+        if (isIdentifierStart(character)) {
+          index += 1;
+          while (index < source.length && isIdentifierPart(source[index])) index += 1;
+          let next = index;
+          while (next < source.length && /\s/u.test(source[next])) next += 1;
+          push(source[next] === '(' ? 'function' : 'identifier', start, index);
+          continue;
+        }
+
+        const pair = source.slice(index, index + 2);
+        if (['<=', '>=', '<>', '!=', '==', '&&', '||'].includes(pair)) {
+          index += 2;
+          push('operator', start, index);
+          continue;
+        }
+        if ('=+-*/<>!&|'.includes(character)) {
+          index += 1;
+          push('operator', start, index);
+          continue;
+        }
+        if ('(),;'.includes(character)) {
+          index += 1;
+          push('punctuation', start, index);
+          continue;
+        }
+
+        index += 1;
+        push('text', start, index);
+      }
+
+      return tokens;
+    }
+
     return {
+      expandExpressionDetailed,
       expandExpression,
+      expandFormulaDetailed,
       expandFormula,
+      findVariable,
       getDependencies,
       getSourceInfo,
+      tokenizeFormula,
     };
   }
 
   return {
     collectReferences,
     createModel,
+    normalizeVariableQuery,
   };
 });

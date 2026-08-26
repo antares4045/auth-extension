@@ -5,6 +5,9 @@
   const GROUPING_STORAGE_KEY = 'formulaBrowserVariableGrouping';
   const ZONE_MODE_STORAGE_KEY = 'formulaBrowserZoneMode';
   const EXPANSION_OPEN_STORAGE_KEY = 'formulaBrowserExpansionOpen';
+  const POPOVER_CANDIDATE_LIMIT = 100;
+  const POPOVER_CANDIDATE_BATCH = 10;
+  const POPOVER_SOURCE_LIMIT = 5;
   const TREE_RENDER_BUDGET = 2000;
   const TREE_EXPAND_BATCH = 100;
   const TYPE_ICON_PATHS = {
@@ -49,7 +52,11 @@
     zoneMode: 'none',
     expansionOpen: false,
     preferencesLoaded: false,
+    preferencesPromise: null,
     popover: null,
+    popoverAnchor: null,
+    popoverSequence: 0,
+    suppressPopoverFocus: false,
     maximized: false,
     restoreRect: null,
     positioned: false,
@@ -200,7 +207,7 @@
     state.panel.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        if (state.popover) dismissVariablePopover();
+        if (state.popover) dismissVariablePopover(true);
         else hideBrowser();
       } else if (event.altKey && event.key === 'ArrowLeft') {
         event.preventDefault();
@@ -517,24 +524,31 @@
   }
 
   async function loadUiPreferences() {
-    state.preferencesLoaded = true;
-    try {
-      const stored = await chrome.storage.sync.get([
-        GROUPING_STORAGE_KEY,
-        ZONE_MODE_STORAGE_KEY,
-        EXPANSION_OPEN_STORAGE_KEY,
-      ]);
-      const grouping = stored?.[GROUPING_STORAGE_KEY];
-      setVariableGrouping(grouping === 'alphabet' ? 'alphabet' : 'request', false);
-      state.zoneMode = ['none', 'direct', 'all'].includes(stored?.[ZONE_MODE_STORAGE_KEY])
-        ? stored[ZONE_MODE_STORAGE_KEY]
-        : 'none';
-      state.expansionOpen = stored?.[EXPANSION_OPEN_STORAGE_KEY] === true;
-    } catch {
-      setVariableGrouping('request', false);
-      state.zoneMode = 'none';
-      state.expansionOpen = false;
+    if (state.preferencesLoaded) return;
+    if (!state.preferencesPromise) {
+      state.preferencesPromise = (async () => {
+        try {
+          const stored = await chrome.storage.sync.get([
+            GROUPING_STORAGE_KEY,
+            ZONE_MODE_STORAGE_KEY,
+            EXPANSION_OPEN_STORAGE_KEY,
+          ]);
+          const grouping = stored?.[GROUPING_STORAGE_KEY];
+          setVariableGrouping(grouping === 'alphabet' ? 'alphabet' : 'request', false);
+          state.zoneMode = ['none', 'direct', 'all'].includes(stored?.[ZONE_MODE_STORAGE_KEY])
+            ? stored[ZONE_MODE_STORAGE_KEY]
+            : 'none';
+          state.expansionOpen = stored?.[EXPANSION_OPEN_STORAGE_KEY] === true;
+        } catch {
+          setVariableGrouping('request', false);
+          state.zoneMode = 'none';
+          state.expansionOpen = false;
+        } finally {
+          state.preferencesLoaded = true;
+        }
+      })();
     }
+    await state.preferencesPromise;
   }
 
   function persistUiPreference(key, value, warning) {
@@ -1365,19 +1379,50 @@
       ? `${label}: карточки ${candidateIds.length} одноимённых переменных`
       : `${label}: карточка переменной`;
     anchor.setAttribute('aria-label', description);
+    anchor.setAttribute('aria-haspopup', 'dialog');
+    anchor.setAttribute('aria-expanded', 'false');
     const show = (event) => {
+      if (event.type === 'focus' && state.suppressPopoverFocus) return;
       if (event.type === 'click') event.stopPropagation();
-      showVariablePopover(anchor, candidateIds, label);
+      showVariablePopover(
+        anchor,
+        candidateIds,
+        label,
+        event.type === 'click' && event.detail === 0,
+      );
     };
     anchor.addEventListener('pointerenter', show);
     anchor.addEventListener('focus', show);
     anchor.addEventListener('click', show);
+    anchor.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowDown') return;
+      event.preventDefault();
+      showVariablePopover(anchor, candidateIds, label, true);
+    });
   }
 
-  function showVariablePopover(anchor, candidateIds, label) {
+  function showVariablePopover(anchor, candidateIds, label, focusCard = false) {
+    if (state.popover && state.popoverAnchor === anchor) {
+      if (focusCard) {
+        (state.popover.querySelector('.fb-popover-open') ||
+          state.popover.querySelector('.fb-popover-close'))?.focus();
+      }
+      return;
+    }
     dismissVariablePopover();
     const popover = element('div', 'fb-variable-popover');
-    const uniqueCandidateIds = [...new Set(candidateIds)];
+    state.popoverSequence += 1;
+    popover.id = `auth-injector-variable-card-${state.popoverSequence}`;
+    popover.setAttribute('role', 'dialog');
+    popover.setAttribute('aria-label', `Карточка переменной: ${label}`);
+    const uniqueCandidateIds = [];
+    const seenCandidateIds = new Set();
+    for (const id of candidateIds) {
+      if (uniqueCandidateIds.length >= POPOVER_CANDIDATE_LIMIT) break;
+      if (seenCandidateIds.has(id)) continue;
+      seenCandidateIds.add(id);
+      uniqueCandidateIds.push(id);
+    }
     const header = element('div', 'fb-popover-header');
     header.append(
       element('strong', '', label),
@@ -1390,45 +1435,44 @@
     const close = element('button', 'fb-popover-close', '×');
     close.type = 'button';
     close.title = 'Закрыть';
-    close.addEventListener('click', dismissVariablePopover);
+    close.addEventListener('click', () => dismissVariablePopover(true));
     popover.append(header, close);
-    uniqueCandidateIds.forEach((id) => {
-      const variable = state.variablesById.get(id);
-      if (!variable) return;
-      const variableCard = element('section', 'fb-popover-card');
-      const variableHeading = element('div', 'fb-popover-variable-heading');
-      variableHeading.append(
-        typeDot(variable.type),
-        element('strong', '', variableLabel(variable)),
-        element('code', '', variable.id),
-      );
-      const meta = element('dl', 'fb-popover-meta');
-      appendDefinition(meta, 'Тип', variable.varType || 'Unknown');
-      appendDefinition(meta, 'Кардинальность', objectTypeLabel(variable.type));
-      appendDefinition(meta, 'Данные', variable.dataType || '—');
-      const sourceInfo = state.model.getDependencySourceInfo(variable.id);
-      const sources = sourceInfo.sources;
-      const sourceDescription = sources.length
-        ? sources.map((source) => `${source.dpName || source.dpId} · ${source.objectId || '—'}`).join('\n')
-        : sourceInfo.truncated
-          ? 'DP не найден в пределах лимита обхода'
-          : 'Нет достижимого DP-источника';
-      appendDefinition(
-        meta,
-        'DP',
-        sourceInfo.truncated ? `${sourceDescription}\n… показан частичный результат` : sourceDescription,
-      );
-      const open = element('button', 'fb-popover-open', 'Перейти к переменной →');
-      open.type = 'button';
-      open.addEventListener('click', () => {
-        dismissVariablePopover();
-        navigate({ kind: 'variable', id });
-      });
-      variableCard.append(variableHeading, meta, open);
-      popover.appendChild(variableCard);
-    });
     state.panel.appendChild(popover);
     state.popover = popover;
+    state.popoverAnchor = anchor;
+    anchor.setAttribute('aria-expanded', 'true');
+    anchor.setAttribute('aria-controls', popover.id);
+
+    let candidateCursor = 0;
+    const renderCandidateBatch = () => {
+      popover.querySelector('.fb-popover-more')?.remove();
+      const batch = uniqueCandidateIds.slice(
+        candidateCursor,
+        candidateCursor + POPOVER_CANDIDATE_BATCH,
+      );
+      batch.forEach((id) => {
+        const card = variablePopoverCard(id);
+        if (card) popover.appendChild(card);
+      });
+      candidateCursor += batch.length;
+      if (candidateCursor < uniqueCandidateIds.length) {
+        const more = element(
+          'button',
+          'fb-popover-more',
+          `Показать ещё (${uniqueCandidateIds.length - candidateCursor})`,
+        );
+        more.type = 'button';
+        more.addEventListener('click', renderCandidateBatch);
+        popover.appendChild(more);
+      } else if (candidateIds.length > POPOVER_CANDIDATE_LIMIT) {
+        popover.appendChild(element(
+          'div',
+          'fb-muted',
+          `Показаны первые ${POPOVER_CANDIDATE_LIMIT} совпадений`,
+        ));
+      }
+    };
+    renderCandidateBatch();
     const anchorRect = anchor.getBoundingClientRect();
     const popoverRect = popover.getBoundingClientRect();
     const panelRect = state.panel.getBoundingClientRect();
@@ -1442,11 +1486,67 @@
     const top = below + popoverRect.height <= panelRect.height - 8 ? below : above;
     popover.style.left = `${left}px`;
     popover.style.top = `${clamp(top, 8, Math.max(8, panelRect.height - popoverRect.height - 8))}px`;
+    if (focusCard) {
+      (popover.querySelector('.fb-popover-open') || close).focus();
+    }
   }
 
-  function dismissVariablePopover() {
+  function variablePopoverCard(id) {
+    const variable = state.variablesById.get(id);
+    if (!variable) return null;
+    const variableCard = element('section', 'fb-popover-card');
+    const variableHeading = element('div', 'fb-popover-variable-heading');
+    variableHeading.append(
+      typeDot(variable.type),
+      element('strong', '', variableLabel(variable)),
+      element('code', '', variable.id),
+    );
+    const meta = element('dl', 'fb-popover-meta');
+    appendDefinition(meta, 'Тип', variable.varType || 'Unknown');
+    appendDefinition(meta, 'Кардинальность', objectTypeLabel(variable.type));
+    appendDefinition(meta, 'Данные', variable.dataType || '—');
+    const sourceInfo = state.model.getDependencySourceInfo(variable.id, { maxNodes: 500 });
+    const visibleSources = sourceInfo.sources.slice(0, POPOVER_SOURCE_LIMIT);
+    let sourceDescription = visibleSources.length
+      ? visibleSources.map((source) => (
+        `${truncateText(source.dpName || source.dpId, 80)} · ${truncateText(source.objectId || '—', 80)}`
+      )).join('\n')
+      : sourceInfo.truncated
+        ? 'DP не найден в пределах лимита обхода'
+        : 'Нет достижимого DP-источника';
+    const hiddenSources = sourceInfo.sources.length - visibleSources.length;
+    if (hiddenSources > 0) sourceDescription += `\n… ещё ${hiddenSources}`;
+    if (sourceInfo.truncated) sourceDescription += '\n… показан частичный результат';
+    appendDefinition(meta, 'DP', sourceDescription);
+    const open = element('button', 'fb-popover-open', 'Перейти к переменной →');
+    open.type = 'button';
+    open.addEventListener('click', () => {
+      dismissVariablePopover();
+      navigate({ kind: 'variable', id });
+    });
+    variableCard.append(variableHeading, meta, open);
+    return variableCard;
+  }
+
+  function truncateText(value, maxLength) {
+    const text = String(value ?? '');
+    return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+  }
+
+  function dismissVariablePopover(returnFocus = false) {
+    const anchor = state.popoverAnchor;
     state.popover?.remove();
     state.popover = null;
+    state.popoverAnchor = null;
+    if (anchor) {
+      anchor.setAttribute('aria-expanded', 'false');
+      anchor.removeAttribute('aria-controls');
+    }
+    if (returnFocus && anchor?.isConnected) {
+      state.suppressPopoverFocus = true;
+      anchor.focus();
+      state.suppressPopoverFocus = false;
+    }
   }
 
   function appendDefinition(list, term, description) {
@@ -1777,6 +1877,8 @@
       .fb-popover-meta dd { min-width: 0; margin: 0; color: #3e4b5b; font-size: 11px; white-space: pre-line; overflow-wrap: anywhere; }
       .fb-popover-open { justify-self: end; padding: 2px 0; border: 0; background: transparent; color: #58799c; font-size: 10px; cursor: pointer; }
       .fb-popover-open:hover { color: #255da9; text-decoration: underline; }
+      .fb-popover-more { justify-self: center; width: 100%; padding: 6px; border: 1px dashed #c8d4df; border-radius: 6px; background: #f8fafc; color: #58799c; font-size: 10px; cursor: pointer; }
+      .fb-popover-more:hover { border-color: #9fb6ca; color: #255da9; }
       @media (max-width: 820px) {
         .fb-window { min-width: calc(100vw - 24px); }
         .fb-workspace { grid-template-columns: 205px minmax(0, 1fr); }

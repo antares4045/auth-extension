@@ -241,23 +241,29 @@
       const maxLength = Number.isFinite(options.maxLength)
         ? Math.max(0, Math.floor(options.maxLength))
         : 200000;
+      const maxZones = Number.isFinite(options.maxZones)
+        ? Math.max(0, Math.floor(options.maxZones))
+        : 100;
       return {
         maxNodes,
         remainingNodes: maxNodes,
         maxLength,
+        maxZones,
+        remainingZones: maxZones,
       };
     }
 
-    function expandReferences(
-      formula,
-      node,
-      path,
-      warnings,
-      maxDepth,
-      budget,
-      zones = null,
-      depth = 0,
-    ) {
+    function createExpansionContext(options, warnings, zones = null) {
+      return {
+        warnings,
+        maxDepth: options.maxDepth ?? 40,
+        budget: createExpansionBudget(options),
+        zones,
+      };
+    }
+
+    function expandReferences(formula, node, path, context, depth = 0) {
+      const { warnings, maxDepth, budget, zones } = context;
       const references = collectReferences(node);
       const positionalReplacements = [];
       let fallbackCursor = 0;
@@ -275,8 +281,13 @@
         const nestedZones = [];
         let strippedPrefix = 0;
         const zoneOnly = isTerminalVariable(dependency);
+        const trackZone = Boolean(zones && budget.remainingZones > 0);
+        if (zones && !trackZone) {
+          addWarning(warnings, `Достигнут предел зонирования (${budget.maxZones})`);
+        }
+        if (trackZone) budget.remainingZones -= 1;
         if (zoneOnly) {
-          if (!zones) return;
+          if (!trackZone) return;
         } else if (path.includes(dependency.id)) {
           const cycleStart = path.indexOf(dependency.id);
           const cycleIds = [...path.slice(cycleStart), dependency.id];
@@ -301,10 +312,10 @@
           const expanded = expandVariable(
             dependency,
             [...path, dependency.id],
-            warnings,
-            maxDepth,
-            budget,
-            zones ? nestedZones : null,
+            {
+              ...context,
+              zones: zones && budget.remainingZones > 0 ? nestedZones : null,
+            },
             depth + 1,
           );
           if (expanded === null) return;
@@ -349,6 +360,7 @@
           nestedZones,
           strippedPrefix,
           zoneOnly,
+          trackZone,
         });
       });
 
@@ -370,26 +382,27 @@
 
       if (zones) {
         const mappedZones = [];
-        appliedReplacements.forEach((item) => {
-          const shift = appliedReplacements.reduce((total, other) => (
-            other.start < item.start
-              ? total + other.replacement.length - other.length
-              : total
-          ), 0);
-          const start = item.start + shift;
-          mappedZones.push({
-            start,
-            length: item.replacement.length,
-            variableId: item.variableId,
-            label: item.label,
-            depth,
+        let shift = 0;
+        appliedReplacements
+          .slice()
+          .sort((a, b) => a.start - b.start)
+          .forEach((item) => {
+            const start = item.start + shift;
+            shift += item.replacement.length - item.length;
+            if (!item.trackZone) return;
+            mappedZones.push({
+              start,
+              length: item.replacement.length,
+              variableId: item.variableId,
+              label: item.label,
+              depth,
+            });
+            const nestedOffset = item.zoneOnly ? start : start + 1 - item.strippedPrefix;
+            item.nestedZones.forEach((zone) => mappedZones.push({
+              ...zone,
+              start: nestedOffset + zone.start,
+            }));
           });
-          const nestedOffset = item.zoneOnly ? start : start + 1 - item.strippedPrefix;
-          item.nestedZones.forEach((zone) => mappedZones.push({
-            ...zone,
-            start: nestedOffset + zone.start,
-          }));
-        });
         mappedZones
           .sort((a, b) => a.start - b.start)
           .forEach((zone) => zones.push(zone));
@@ -398,7 +411,8 @@
       return formula;
     }
 
-    function expandVariable(variable, path, warnings, maxDepth, budget, zones = null, depth = 0) {
+    function expandVariable(variable, path, context, depth = 0) {
+      const { warnings, budget } = context;
       let formula =
         variable.parsedFormula?.source ||
         variable.formula;
@@ -422,10 +436,7 @@
         formula,
         variable.parsedFormula?.root,
         path,
-        warnings,
-        maxDepth,
-        budget,
-        zones,
+        context,
         depth,
       );
     }
@@ -444,10 +455,9 @@
       if (!variable) return { formula: '', warnings: [`Переменная ${variableId} не найдена`] };
 
       const warnings = [];
-      const maxDepth = options.maxDepth ?? 40;
-      const budget = createExpansionBudget(options);
+      const context = createExpansionContext(options, warnings);
       return {
-        formula: expandVariable(variable, [variable.id], warnings, maxDepth, budget, null) ?? '',
+        formula: expandVariable(variable, [variable.id], context) ?? '',
         warnings,
       };
     }
@@ -465,15 +475,11 @@
 
       const warnings = [];
       const collectedZones = [];
-      const maxDepth = options.maxDepth ?? 40;
-      const budget = createExpansionBudget(options);
+      const context = createExpansionContext(options, warnings, collectedZones);
       const formula = expandVariable(
         variable,
         [variable.id],
-        warnings,
-        maxDepth,
-        budget,
-        collectedZones,
+        context,
       ) ?? '';
       return {
         formula,
@@ -485,20 +491,19 @@
 
     function expandExpression(formula, node, options = {}) {
       const warnings = [];
-      const maxDepth = options.maxDepth ?? 40;
-      const budget = createExpansionBudget(options);
-      if (formula.length > budget.maxLength) {
+      const context = createExpansionContext(options, warnings);
+      if (formula.length > context.budget.maxLength) {
         addWarning(
           warnings,
-          `Достигнут предел длины раскрытой формулы (${budget.maxLength} символов)`,
+          `Достигнут предел длины раскрытой формулы (${context.budget.maxLength} символов)`,
         );
         return {
-          formula: formula.slice(0, budget.maxLength),
+          formula: formula.slice(0, context.budget.maxLength),
           warnings,
         };
       }
       return {
-        formula: expandReferences(formula, node, [], warnings, maxDepth, budget, null),
+        formula: expandReferences(formula, node, [], context),
         warnings,
       };
     }
@@ -506,15 +511,14 @@
     function expandExpressionDetailed(formula, node, options = {}) {
       const warnings = [];
       const collectedZones = [];
-      const maxDepth = options.maxDepth ?? 40;
-      const budget = createExpansionBudget(options);
-      if (formula.length > budget.maxLength) {
+      const context = createExpansionContext(options, warnings, collectedZones);
+      if (formula.length > context.budget.maxLength) {
         addWarning(
           warnings,
-          `Достигнут предел длины раскрытой формулы (${budget.maxLength} символов)`,
+          `Достигнут предел длины раскрытой формулы (${context.budget.maxLength} символов)`,
         );
         return {
-          formula: formula.slice(0, budget.maxLength),
+          formula: formula.slice(0, context.budget.maxLength),
           warnings,
           zones: [],
           allZones: [],
@@ -524,10 +528,7 @@
         formula,
         node,
         [],
-        warnings,
-        maxDepth,
-        budget,
-        collectedZones,
+        context,
       );
       return {
         formula: expandedFormula,

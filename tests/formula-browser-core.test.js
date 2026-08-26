@@ -513,6 +513,42 @@ test('возвращает вложенные зоны всех уровней, 
   });
 });
 
+test('ограничивает число зон для формулы с множеством терминальных ссылок', () => {
+  const leafVariables = Array.from({ length: 8 }, (_, index) => ({
+    id: `leaf-${index}`,
+    name: `Leaf ${index}`,
+    varType: 'DP',
+  }));
+  const formula = `=${leafVariables.map((variable) => `[${variable.name}]`).join('+')}`;
+  const args = [];
+  let cursor = 1;
+  leafVariables.forEach((variable) => {
+    const literal = `[${variable.name}]`;
+    args.push({
+      nodeType: 'var',
+      varId: variable.id,
+      literal: variable.name,
+      start: cursor,
+      length: literal.length,
+    });
+    cursor += literal.length + 1;
+  });
+  const model = FormulaBrowserCore.createModel([
+    {
+      id: 'root', name: 'Root', formula,
+      parsedFormula: { root: { nodeType: 'function', args } },
+    },
+    ...leafVariables,
+  ], []);
+
+  const expansion = model.expandFormulaDetailed('root', { maxZones: 3 });
+
+  assert.equal(expansion.formula, formula);
+  assert.equal(expansion.zones.length, 3);
+  assert.equal(expansion.allZones.length, 3);
+  assert.match(expansion.warnings.join('\n'), /предел зонирования \(3\)/);
+});
+
 test('поиск принимает имя с одной или двумя квадратными скобками', () => {
   const model = FormulaBrowserCore.createModel([
     { id: 'income', name: 'Доход с НДС' },

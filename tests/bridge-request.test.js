@@ -145,3 +145,60 @@ test('просроченное переключение движка не отп
   assert.match(response.error, /Истекло время операции/);
   assert.equal(fetchCalls, 0);
 });
+
+test('переключение не начинает SET, если GET израсходовал бюджет операции', async () => {
+  let messageListener;
+  const commands = [];
+  const realDateNow = Date.now;
+  let now = realDateNow();
+  Date.now = () => now;
+
+  try {
+    global.localStorage = {
+      getItem: (key) => key === 'token' ? '<TEST_TOKEN>' : null,
+      setItem: () => {},
+    };
+    global.sessionStorage = {
+      getItem: (key) => key === 'receiver' || key === 'streamreceiver' ? key : null,
+    };
+    global.window = { location: { origin: 'https://example.test' } };
+    global.document = { addEventListener: () => {} };
+    global.chrome = {
+      storage: { sync: { get: async () => ({ instances: {} }) } },
+      runtime: {
+        onMessage: { addListener(listener) { messageListener = listener; } },
+        sendMessage: () => {},
+      },
+    };
+    global.fetch = async (_url, options) => {
+      const body = String(options.body);
+      const code = decodeURIComponent(body.split('&').find((part) => part.startsWith('code=')).slice(5));
+      commands.push(code);
+      return {
+        ok: true,
+        status: 200,
+        text: async () => {
+          now += 9501;
+          return '{"settings":{"engineVersion":"4"}}';
+        },
+      };
+    };
+
+    delete require.cache[require.resolve('../content/content.js')];
+    require('../content/content.js');
+
+    const response = await new Promise((resolve) => {
+      messageListener(
+        { action: 'toggleSetting', deadline: now + 10000 },
+        {},
+        resolve,
+      );
+    });
+
+    assert.equal(response.success, false);
+    assert.match(response.error, /Истекло время операции/);
+    assert.deepEqual(commands, ['REP.GET_REPORT_SETTINGS']);
+  } finally {
+    Date.now = realDateNow;
+  }
+});

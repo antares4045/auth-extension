@@ -53,3 +53,40 @@ test('REP.VALIDATE_FORMULA кодирует пробелы в JSON-параме�
   assert.match(encodedParams, /%20/);
   assert.doesNotMatch(encodedParams, /\+/);
 });
+
+test('API-мост отменяет зависший запрос по таймауту', async () => {
+  global.localStorage = {
+    getItem: (key) => key === 'token' ? '<TEST_TOKEN>' : null,
+    setItem: () => {},
+  };
+  global.sessionStorage = { getItem: () => null };
+  global.window = { location: { origin: 'https://example.test' } };
+  global.document = { addEventListener: () => {} };
+  global.chrome = {
+    storage: { sync: { get: async () => ({ instances: {} }) } },
+    runtime: {
+      onMessage: { addListener: () => {} },
+      sendMessage: () => {},
+    },
+  };
+  global.fetch = (url, options) => new Promise((resolve, reject) => {
+    options.signal.addEventListener('abort', () => {
+      const error = new Error('aborted');
+      error.name = 'AbortError';
+      reject(error);
+    }, { once: true });
+  });
+
+  delete require.cache[require.resolve('../content/content.js')];
+  require('../content/content.js');
+
+  await assert.rejects(
+    global.AuthInjectorBridge.requestJson(
+      'REP.GET_VARIABLES',
+      {},
+      false,
+      { timeoutMs: 5 },
+    ),
+    /превышено время ожидания/,
+  );
+});

@@ -36,8 +36,15 @@ const encodeFormBody = (fields) => Object.entries(fields)
     .filter(([, value]) => value !== undefined && value !== null)
     .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
     .join('&');
+const DEFAULT_BRIDGE_TIMEOUT_MS = 30000;
+const REPORT_SETTING_TIMEOUT_MS = 8000;
 
-const requestToBridge  =  (command, params=null, useReceives=false) => {
+const requestToBridge = async (
+    command,
+    params = null,
+    useReceives = false,
+    { signal, timeoutMs = DEFAULT_BRIDGE_TIMEOUT_MS } = {},
+) => {
         const myHeaders = new Headers();
         myHeaders.append("Content-Type", "application/x-www-form-urlencoded");
 
@@ -53,17 +60,40 @@ const requestToBridge  =  (command, params=null, useReceives=false) => {
             params: params ? JSON.stringify(params) : null,
         });
 
+        const controller = new AbortController();
+        let timedOut = false;
+        const abortFromCaller = () => controller.abort(signal?.reason);
+        if (signal?.aborted) abortFromCaller();
+        else signal?.addEventListener('abort', abortFromCaller, { once: true });
+        const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0
+            ? setTimeout(() => {
+                timedOut = true;
+                controller.abort();
+            }, timeoutMs)
+            : null;
         const requestOptions = {
             method: "POST",
             headers: myHeaders,
             body: urlencoded,
-            redirect: "follow"
+            redirect: "follow",
+            signal: controller.signal,
         };
 
-        return fetch(apiUrl, requestOptions)
+        try {
+            return await fetch(apiUrl, requestOptions);
+        } catch (error) {
+            if (!controller.signal.aborted) throw error;
+            if (timedOut) {
+                throw new Error(`${command}: превышено время ожидания (${timeoutMs} мс)`);
+            }
+            throw new Error(`${command}: запрос отменён`);
+        } finally {
+            if (timeout !== null) clearTimeout(timeout);
+            signal?.removeEventListener('abort', abortFromCaller);
+        }
     }
 
-async function requestJsonFromBridge(command, params = null, useReceives = false) {
+async function requestJsonFromBridge(command, params = null, useReceives = false, options = {}) {
     if (!localStorage.getItem(tokenKey)) {
         throw new Error('В localStorage нет token — сначала авторизуйтесь');
     }
@@ -75,7 +105,7 @@ async function requestJsonFromBridge(command, params = null, useReceives = false
         updateApiUrl(instances[window.location.origin]);
     }
 
-    const response = await requestToBridge(command, params, useReceives);
+    const response = await requestToBridge(command, params, useReceives, options);
     if (!response.ok) throw new Error(`${command}: HTTP ${response.status}`);
 
     const text = await response.text();
@@ -235,7 +265,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Функция для получения текущего значения настройки
 async function getCurrentSetting(params = null) {
     // Используем существующую requestToBridge
-    const response = await requestToBridge('REP.GET_REPORT_SETTINGS', params, true);
+    const response = await requestToBridge(
+        'REP.GET_REPORT_SETTINGS',
+        params,
+        true,
+        { timeoutMs: REPORT_SETTING_TIMEOUT_MS },
+    );
     if (!response.ok) throw new Error('Failed to get setting');
     const data = await response.json();
     
@@ -249,7 +284,12 @@ async function toggleSetting(params = null) {
     const currentValue = await getCurrentSetting(params);
     const newValue = currentValue == "4" ? "3" : "4";
     // Отправляем запрос на установку нового значения
-    const updateResponse = await requestToBridge('REP.SET_REPORT_SETTINGS', { "settings": {"engineVersion": newValue} }, true);
+    const updateResponse = await requestToBridge(
+        'REP.SET_REPORT_SETTINGS',
+        { "settings": {"engineVersion": newValue} },
+        true,
+        { timeoutMs: REPORT_SETTING_TIMEOUT_MS },
+    );
     if (!updateResponse.ok) throw new Error('Failed to toggle setting');
     return newValue;
 }

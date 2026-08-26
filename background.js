@@ -44,6 +44,20 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     chrome.storage.session.remove(`originalUrl_${tabId}`);
 });
 
+chrome.commands.onCommand.addListener(async (command, commandTab) => {
+    if (command !== 'open-formula-browser') return;
+    const [activeTab] = commandTab?.id
+        ? [commandTab]
+        : await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = activeTab;
+    if (!tab?.id) return;
+    try {
+        await chrome.tabs.sendMessage(tab.id, { action: 'openFormulaBrowser' });
+    } catch (error) {
+        console.warn('[Auth Injector] Не удалось открыть браузер формул по хоткею:', error);
+    }
+});
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     if (msg.action === 'set-badge') {

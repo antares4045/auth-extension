@@ -1,8 +1,16 @@
 {
   "manifest_version": 3,
   "name": "Universal Auth Injector",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "permissions": ["storage", "webNavigation", "tabs"],
+  "commands": {
+    "open-formula-browser": {
+      "suggested_key": {
+        "default": "Alt+V"
+      },
+      "description": "Открыть браузер формул"
+    }
+  },
   "action": {
     "default_popup": "popup/popup.html",
     "default_icon": "assets/icon.png"

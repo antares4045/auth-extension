@@ -279,4 +279,28 @@ body {
     line-height: 1.35;
 }
 
+.formula-shortcut-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 3px;
+    color: rgba(0,0,0,0.5);
+    font-size: 11px;
+}
+
+.material-text-button {
+    padding: 2px 0;
+    border: 0;
+    background: transparent;
+    color: rgba(98,0,238,0.72);
+    font: inherit;
+    cursor: pointer;
+}
+
+.material-text-button:hover {
+    color: var(--primary-color);
+    text-decoration: underline;
+}
+
 /* Адаптивная ширина для маленьких экранов (уже 320px) */

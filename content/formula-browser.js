@@ -46,6 +46,7 @@
     model: null,
     loaded: false,
     loading: false,
+    loadController: null,
     history: [],
     historyIndex: -1,
     sidebarTab: 'variables',
@@ -89,7 +90,10 @@
     }
     state.shadow.getElementById('fb-search').focus();
     if (!state.preferencesLoaded) await loadUiPreferences();
-    if (!state.loaded && !state.loading) await loadData();
+    if (!state.loaded) {
+      const restartAbortedLoad = state.loadController?.signal.aborted === true;
+      if (!state.loading || restartAbortedLoad) void loadData(restartAbortedLoad);
+    }
   }
 
   function mount() {
@@ -134,10 +138,10 @@
         <div class="fb-editor">
           <label for="fb-formula">Формула для анализа</label>
           <div class="fb-editor-row">
-            <textarea id="fb-formula" rows="2" maxlength="200000" spellcheck="false" placeholder="=[Количество всего чеков (сравн)]+[Количество чеков услуги (сравн)]"></textarea>
+            <textarea id="fb-formula" rows="2" maxlength="200000" spellcheck="false" placeholder="=max([a] where ([b] &lt; [c]))"></textarea>
             <button id="fb-analyze" class="fb-button fb-button-primary" type="button">Анализировать</button>
           </div>
-          <div class="fb-shortcuts">Ctrl+Enter — анализ · Alt+←/→ — история · Esc — скрыть</div>
+          <div class="fb-shortcuts">Ctrl+Enter — анализ · Alt+←/→ — история · двойной клик по переменной — перейти · Esc — скрыть</div>
         </div>
 
         <div class="fb-workspace">
@@ -277,6 +281,7 @@
 
   function hideBrowser() {
     dismissVariablePopover();
+    state.loadController?.abort();
     if (state.host) state.host.style.display = 'none';
   }
 
@@ -318,15 +323,19 @@
   }
 
   async function loadData(force = false) {
-    if (state.loading || (state.loaded && !force)) return;
+    if (state.loading && !force) return;
+    if (state.loaded && !force) return;
+    if (force) state.loadController?.abort();
+    const controller = new AbortController();
+    state.loadController = controller;
     state.loading = true;
     setBusy(true);
     setStatus('Загрузка REP.GET_VARIABLES и REP.GET_DP_LIST…', 'neutral');
 
     try {
       const [variablesResponse, dpsResult] = await Promise.all([
-        requestJson('REP.GET_VARIABLES', {}),
-        requestJson('REP.GET_DP_LIST', {})
+        requestJson('REP.GET_VARIABLES', {}, { signal: controller.signal }),
+        requestJson('REP.GET_DP_LIST', {}, { signal: controller.signal })
           .then((response) => {
             if (response.result !== 1 || !Array.isArray(response.dps)) {
               throw new Error('REP.GET_DP_LIST не вернул список источников');
@@ -377,18 +386,22 @@
         dpsResult.error || ignoredCount ? 'warning' : 'success',
       );
     } catch (error) {
+      if (controller.signal.aborted) return;
       renderError(error.message);
       setStatus(error.message, 'error');
     } finally {
-      state.loading = false;
-      setBusy(false);
+      if (state.loadController === controller) {
+        state.loading = false;
+        state.loadController = null;
+        setBusy(false);
+      }
     }
   }
 
-  async function requestJson(command, params) {
+  async function requestJson(command, params, options = {}) {
     const bridge = globalThis.AuthInjectorBridge;
     if (!bridge?.requestJson) throw new Error('API-мост расширения не инициализирован');
-    return bridge.requestJson(command, params, true);
+    return bridge.requestJson(command, params, true, options);
   }
 
   function populateVariableOptions() {
@@ -1430,7 +1443,7 @@
   function bindVariablePopover(anchor, candidateIds, label) {
     const description = candidateIds.length > 1
       ? `${label}: карточки ${candidateIds.length} одноимённых переменных`
-      : `${label}: карточка переменной`;
+      : `${label}: один клик — карточка, двойной — перейти`;
     anchor.setAttribute('aria-label', description);
     anchor.setAttribute('aria-haspopup', 'dialog');
     anchor.setAttribute('aria-expanded', 'false');
@@ -1445,6 +1458,13 @@
       );
     };
     anchor.addEventListener('click', show);
+    anchor.addEventListener('dblclick', (event) => {
+      if (candidateIds.length !== 1) return;
+      event.preventDefault();
+      event.stopPropagation();
+      dismissVariablePopover();
+      navigate({ kind: 'variable', id: candidateIds[0] });
+    });
     anchor.addEventListener('keydown', (event) => {
       if (!['ArrowDown', 'Enter', ' '].includes(event.key)) return;
       event.preventDefault();

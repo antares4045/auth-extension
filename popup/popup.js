@@ -73,6 +73,20 @@ function addNewInstance() {
 
 // --- Логика для вкладок (tab) ---
 let currentTab = 'instances';
+const POPUP_MESSAGE_TIMEOUT_MS = 12000;
+
+function withTimeout(promise, timeoutMs = POPUP_MESSAGE_TIMEOUT_MS) {
+    let timer;
+    return Promise.race([
+        Promise.resolve(promise),
+        new Promise((_, reject) => {
+            timer = setTimeout(
+                () => reject(new Error('Вкладка не ответила вовремя')),
+                timeoutMs,
+            );
+        }),
+    ]).finally(() => clearTimeout(timer));
+}
 
 function showTab(tabId) {
     document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
@@ -118,11 +132,11 @@ async function loadCurrentState(tabId) {
     try {
       console.log("load state", tabId);
         // Отправляем запрос в контентный скрипт
-        const response = await chrome.tabs.sendMessage(tabId, {
+        const response = await withTimeout(chrome.tabs.sendMessage(tabId, {
             action: 'getSetting',
             // Здесь нужные параметры для запроса, читаемые из sessionStorage
             // params: { /* param1: 'value1', param2: 'value2' */ }
-        });
+        }));
         if (response && response.success) {
             stateSpan.textContent = response.value;
             toggleBtn.disabled = false;
@@ -132,6 +146,8 @@ async function loadCurrentState(tabId) {
     } catch (error) {
         console.error("Ошибка при загрузке состояния:", error);
         stateSpan.textContent = 'Ошибка';
+    } finally {
+        toggleBtn.disabled = false;
     }
 }
 
@@ -146,10 +162,10 @@ async function onToggleState() {
     stateSpan.textContent = 'Отправка...';
 
     try {
-        const response = await chrome.tabs.sendMessage(tab.id, {
+        const response = await withTimeout(chrome.tabs.sendMessage(tab.id, {
             action: 'toggleSetting',
             // params: { /* param1: 'value1', param2: 'value2' */ }
-        });
+        }));
         if (response && response.success) {
             stateSpan.textContent = response.newValue;
         } else {
@@ -178,9 +194,9 @@ async function onOpenFormulaBrowser() {
     status.textContent = '';
 
     try {
-        const response = await chrome.tabs.sendMessage(tab.id, {
+        const response = await withTimeout(chrome.tabs.sendMessage(tab.id, {
             action: 'openFormulaBrowser',
-        });
+        }));
         if (!response?.success) {
             throw new Error(response?.error || 'Контентный скрипт не ответил');
         }
@@ -188,8 +204,30 @@ async function onOpenFormulaBrowser() {
     } catch (error) {
         console.error('Ошибка открытия браузера формул:', error);
         status.textContent = 'Не удалось открыть. Обновите страницу отчёта.';
+    } finally {
         button.disabled = false;
         button.textContent = 'Открыть браузер формул';
+    }
+}
+
+async function loadFormulaBrowserShortcut() {
+    const label = document.getElementById('formula-browser-shortcut');
+    try {
+        const commands = await chrome.commands.getAll();
+        const command = commands.find((item) => item.name === 'open-formula-browser');
+        label.textContent = `Хоткей: ${command?.shortcut || 'не назначен'}`;
+    } catch {
+        label.textContent = 'Хоткей настраивается в браузере';
+    }
+}
+
+async function openShortcutSettings() {
+    try {
+        await chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
+        window.close();
+    } catch {
+        document.getElementById('formula-browser-shortcut').textContent =
+            'Откройте chrome://extensions/shortcuts';
     }
 }
 
@@ -205,6 +243,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('add-instance').addEventListener('click', addNewInstance);
     document.getElementById('toggle-state-btn').addEventListener('click', onToggleState);
     document.getElementById('open-formula-browser-btn').addEventListener('click', onOpenFormulaBrowser);
+    document.getElementById('configure-shortcuts-btn').addEventListener('click', openShortcutSettings);
 
     // Настройка вкладок
     document.querySelectorAll('.tab-button').forEach(btn => {
@@ -212,4 +251,5 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     await checkAndSetupReportTab();
+    await loadFormulaBrowserShortcut();
 });

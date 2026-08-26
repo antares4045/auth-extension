@@ -475,6 +475,41 @@ test('возвращает зоны прямых переменных в коо�
       { start: 1, length: 3, variableId: 'left', label: 'Left' },
       { start: 5, length: 4, variableId: 'right', label: 'Right' },
     ],
+    allZones: [
+      { start: 1, length: 3, variableId: 'left', label: 'Left' },
+      { start: 5, length: 4, variableId: 'right', label: 'Right' },
+    ],
+  });
+});
+
+test('возвращает вложенные зоны всех уровней, включая терминальный DP-лист', () => {
+  const variables = [
+    {
+      id: 'root', name: 'Root', formula: '=[Middle]+1',
+      parsedFormula: { root: {
+        nodeType: 'var', varId: 'middle', literal: 'Middle', start: 1, length: 8,
+      } },
+    },
+    {
+      id: 'middle', name: 'Middle', formula: '=[Leaf]+2',
+      parsedFormula: { root: {
+        nodeType: 'var', varId: 'leaf', literal: 'Leaf', start: 1, length: 6,
+      } },
+    },
+    { id: 'leaf', name: 'Leaf', varType: 'DP', formula: '=[Leaf]' },
+  ];
+  const model = FormulaBrowserCore.createModel(variables, []);
+
+  assert.deepEqual(model.expandFormulaDetailed('root'), {
+    formula: '=([Leaf]+2)+1',
+    warnings: [],
+    zones: [
+      { start: 1, length: 10, variableId: 'middle', label: 'Middle' },
+    ],
+    allZones: [
+      { start: 1, length: 10, variableId: 'middle', label: 'Middle' },
+      { start: 2, length: 6, variableId: 'leaf', label: 'Leaf' },
+    ],
   });
 });
 

@@ -3,6 +3,8 @@
 
   const core = globalThis.FormulaBrowserCore;
   const GROUPING_STORAGE_KEY = 'formulaBrowserVariableGrouping';
+  const ZONE_MODE_STORAGE_KEY = 'formulaBrowserZoneMode';
+  const EXPANSION_OPEN_STORAGE_KEY = 'formulaBrowserExpansionOpen';
   const TREE_RENDER_BUDGET = 2000;
   const TREE_EXPAND_BATCH = 100;
   const TYPE_ICON_PATHS = {
@@ -44,7 +46,9 @@
     historyIndex: -1,
     sidebarTab: 'variables',
     variableGrouping: 'request',
-    groupingLoaded: false,
+    zoneMode: 'none',
+    expansionOpen: false,
+    preferencesLoaded: false,
     popover: null,
     maximized: false,
     restoreRect: null,
@@ -75,7 +79,7 @@
       state.positioned = true;
     }
     state.shadow.getElementById('fb-search').focus();
-    if (!state.groupingLoaded) await loadGroupingPreference();
+    if (!state.preferencesLoaded) await loadUiPreferences();
     if (!state.loaded && !state.loading) await loadData();
   }
 
@@ -176,11 +180,22 @@
     $('fb-refresh').addEventListener('click', () => loadData(true));
     $('fb-analyze').addEventListener('click', analyzeFormula);
     $('fb-search-form').addEventListener('submit', openSearchResult);
+    $('fb-search').addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
+      event.preventDefault();
+      $('fb-search-form').requestSubmit();
+    });
     $('fb-tab-variables').addEventListener('click', () => setSidebarTab('variables'));
     $('fb-tab-history').addEventListener('click', () => setSidebarTab('history'));
     $('fb-list-filter').addEventListener('input', renderVariableList);
     $('fb-group-request').addEventListener('click', () => setVariableGrouping('request'));
     $('fb-group-alphabet').addEventListener('click', () => setVariableGrouping('alphabet'));
+    state.panel.addEventListener('pointerdown', (event) => {
+      if (!state.popover || event.target.closest(
+        '.fb-variable-popover, .fb-formula-variable, .fb-origin-label',
+      )) return;
+      dismissVariablePopover();
+    });
 
     state.panel.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
@@ -501,15 +516,31 @@
     state.shadow.getElementById('fb-history-panel').hidden = variablesActive;
   }
 
-  async function loadGroupingPreference() {
-    state.groupingLoaded = true;
+  async function loadUiPreferences() {
+    state.preferencesLoaded = true;
     try {
-      const stored = await chrome.storage.sync.get(GROUPING_STORAGE_KEY);
+      const stored = await chrome.storage.sync.get([
+        GROUPING_STORAGE_KEY,
+        ZONE_MODE_STORAGE_KEY,
+        EXPANSION_OPEN_STORAGE_KEY,
+      ]);
       const grouping = stored?.[GROUPING_STORAGE_KEY];
       setVariableGrouping(grouping === 'alphabet' ? 'alphabet' : 'request', false);
+      state.zoneMode = ['none', 'direct', 'all'].includes(stored?.[ZONE_MODE_STORAGE_KEY])
+        ? stored[ZONE_MODE_STORAGE_KEY]
+        : 'none';
+      state.expansionOpen = stored?.[EXPANSION_OPEN_STORAGE_KEY] === true;
     } catch {
       setVariableGrouping('request', false);
+      state.zoneMode = 'none';
+      state.expansionOpen = false;
     }
+  }
+
+  function persistUiPreference(key, value, warning) {
+    chrome.storage.sync.set({ [key]: value }).catch(() => {
+      setStatus(warning, 'warning');
+    });
   }
 
   function setVariableGrouping(grouping, persist = true) {
@@ -826,30 +857,58 @@
     const body = element('div', 'fb-expansion-body');
     let rendered = false;
     details.append(summary, body);
-    details.addEventListener('toggle', () => {
-      if (!details.open || rendered) return;
+    details.open = state.expansionOpen;
+
+    const renderBody = () => {
+      if (rendered) return;
       rendered = true;
       try {
         const expansion = getExpansion();
         const controls = element('div', 'fb-expansion-controls');
-        const zoneToggle = element('label', 'fb-zone-toggle');
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.checked = false;
-        zoneToggle.append(checkbox, element('span', '', 'Зонирование по исходным переменным'));
-        controls.append(
-          zoneToggle,
-          element('span', 'fb-muted', 'Снимите галочку, чтобы оставить только подсветку синтаксиса.'),
-        );
+        const zoneModes = element('div', 'fb-zone-modes');
+        zoneModes.setAttribute('role', 'group');
+        zoneModes.setAttribute('aria-label', 'Режим зонирования формулы');
         const formulaHost = element('div');
         const renderExpansion = () => {
+          const zones = state.zoneMode === 'all'
+            ? expansion.allZones || expansion.zones
+            : state.zoneMode === 'direct'
+              ? expansion.zones
+              : [];
           formulaHost.replaceChildren(richFormulaBlock(
             expansion.formula || 'Нет формулы',
             null,
-            checkbox.checked ? expansion.zones : [],
+            zones,
           ));
+          zoneModes.querySelectorAll('.fb-zone-mode').forEach((button) => {
+            const active = button.dataset.mode === state.zoneMode;
+            button.classList.toggle('is-active', active);
+            button.setAttribute('aria-pressed', String(active));
+          });
         };
-        checkbox.addEventListener('change', renderExpansion);
+        [
+          ['none', 'Без зон'],
+          ['direct', 'Верхний уровень'],
+          ['all', 'Все уровни'],
+        ].forEach(([mode, label]) => {
+          const button = element('button', 'fb-zone-mode', label);
+          button.type = 'button';
+          button.dataset.mode = mode;
+          button.addEventListener('click', () => {
+            state.zoneMode = mode;
+            persistUiPreference(
+              ZONE_MODE_STORAGE_KEY,
+              mode,
+              'Не удалось сохранить режим зонирования',
+            );
+            renderExpansion();
+          });
+          zoneModes.appendChild(button);
+        });
+        controls.append(
+          zoneModes,
+          element('span', 'fb-muted', 'Зоны показывают происхождение фрагментов раскрытой формулы.'),
+        );
         body.append(controls, formulaHost);
         renderExpansion();
         expansion.warnings.forEach((warning) =>
@@ -858,6 +917,19 @@
       } catch (error) {
         body.appendChild(element('div', 'fb-warning', error.message));
       }
+    };
+
+    details.addEventListener('toggle', () => {
+      state.expansionOpen = details.open;
+      persistUiPreference(
+        EXPANSION_OPEN_STORAGE_KEY,
+        details.open,
+        'Не удалось сохранить состояние полной развёртки',
+      );
+      if (details.open) renderBody();
+    });
+    if (details.open) queueMicrotask(() => {
+      if (details.isConnected) renderBody();
     });
     return sectionCard('', details, 'fb-card-no-title');
   }
@@ -1190,34 +1262,68 @@
         zone && Number.isInteger(zone.start) && Number.isInteger(zone.length) &&
         zone.start >= 0 && zone.length > 0 && zone.start + zone.length <= highlightedEnd
       ))
-      .sort((a, b) => a.start - b.start)
-      .filter((zone, index, all) => index === 0 || zone.start >= all[index - 1].start + all[index - 1].length)
+      .sort((a, b) => a.start - b.start || b.length - a.length)
       .slice(0, 100);
-    let cursor = 0;
-
-    validZones.forEach((zone, index) => {
-      appendFormulaTokens(block, tokens, cursor, zone.start);
-      const wrapper = element('span', `fb-origin-zone fb-zone-${index % 6}`);
-      const code = element('span', 'fb-origin-code');
-      appendFormulaTokens(code, tokens, zone.start, zone.start + zone.length);
-      const label = element('button', 'fb-origin-label', zone.label || zone.variableId);
-      label.type = 'button';
-      label.title = `Информация о переменной ${zone.label || zone.variableId}`;
-      label.addEventListener('click', (event) => {
-        event.stopPropagation();
-        showVariablePopover(label, [zone.variableId], zone.label || zone.variableId);
-      });
-      wrapper.append(label, code);
-      block.appendChild(wrapper);
-      cursor = zone.start + zone.length;
-    });
-    appendFormulaTokens(block, tokens, cursor, highlightedEnd);
+    appendFormulaRangeWithZones(
+      block,
+      tokens,
+      0,
+      highlightedEnd,
+      buildZoneForest(validZones),
+      { value: 0 },
+    );
     if (highlightedEnd < formula.length) {
       const tail = element('span', 'fb-token-unhighlighted', formula.slice(highlightedEnd));
       tail.title = 'Для производительности подсветка ограничена первыми 5000 токенами / 50000 символами';
       block.appendChild(tail);
     }
     return block;
+  }
+
+  function buildZoneForest(zones) {
+    const roots = [];
+    const stack = [];
+    zones.forEach((zone) => {
+      const node = { ...zone, end: zone.start + zone.length, children: [] };
+      while (stack.length && node.start >= stack[stack.length - 1].end) stack.pop();
+      const parent = stack[stack.length - 1];
+      if (parent) {
+        if (node.end > parent.end) return;
+        parent.children.push(node);
+      } else {
+        roots.push(node);
+      }
+      stack.push(node);
+    });
+    return roots;
+  }
+
+  function appendFormulaRangeWithZones(container, tokens, start, end, zones, palette) {
+    let cursor = start;
+    zones.forEach((zone) => {
+      if (zone.start < cursor || zone.end > end) return;
+      appendFormulaTokens(container, tokens, cursor, zone.start);
+      const zoneIndex = palette.value;
+      palette.value += 1;
+      const wrapper = element('span', `fb-origin-zone fb-zone-${zoneIndex % 6}`);
+      const labelText = zone.label || zone.variableId;
+      const label = element('button', 'fb-origin-label', labelText);
+      label.type = 'button';
+      bindVariablePopover(label, [zone.variableId], labelText);
+      const code = element('span', 'fb-origin-code');
+      appendFormulaRangeWithZones(
+        code,
+        tokens,
+        zone.start,
+        zone.end,
+        zone.children,
+        palette,
+      );
+      wrapper.append(label, code);
+      container.appendChild(wrapper);
+      cursor = zone.end;
+    });
+    appendFormulaTokens(container, tokens, cursor, end);
   }
 
   function appendFormulaTokens(container, tokens, rangeStart, rangeEnd) {
@@ -1249,15 +1355,23 @@
       return node;
     }
     node.type = 'button';
-    node.title = candidateIds.length > 1
-      ? `Найдено одноимённых переменных: ${candidateIds.length}`
-      : 'Открыть переменную';
-    node.addEventListener('click', (event) => {
-      event.stopPropagation();
-      const ids = token.variableId ? [token.variableId] : candidateIds;
-      showVariablePopover(node, ids, text);
-    });
+    const ids = token.variableId ? [token.variableId] : candidateIds;
+    bindVariablePopover(node, ids, text);
     return node;
+  }
+
+  function bindVariablePopover(anchor, candidateIds, label) {
+    const description = candidateIds.length > 1
+      ? `${label}: карточки ${candidateIds.length} одноимённых переменных`
+      : `${label}: карточка переменной`;
+    anchor.setAttribute('aria-label', description);
+    const show = (event) => {
+      if (event.type === 'click') event.stopPropagation();
+      showVariablePopover(anchor, candidateIds, label);
+    };
+    anchor.addEventListener('pointerenter', show);
+    anchor.addEventListener('focus', show);
+    anchor.addEventListener('click', show);
   }
 
   function showVariablePopover(anchor, candidateIds, label) {
@@ -1304,7 +1418,7 @@
         'DP',
         sourceInfo.truncated ? `${sourceDescription}\n… показан частичный результат` : sourceDescription,
       );
-      const open = element('button', 'fb-popover-open', 'Открыть переменную');
+      const open = element('button', 'fb-popover-open', 'Перейти к переменной →');
       open.type = 'button';
       open.addEventListener('click', () => {
         dismissVariablePopover();
@@ -1592,8 +1706,10 @@
       .fb-zone-5 { border-color: #c4d9d7; background: rgba(238,247,246,.72); }
       .fb-zone-5 .fb-origin-label { border-color: #c4d9d7; color: #557976; }
       .fb-expansion-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
-      .fb-zone-toggle { display: inline-flex; align-items: center; gap: 6px; color: #334155; font-weight: 600; cursor: pointer; }
-      .fb-zone-toggle input { width: 15px; min-width: 15px; height: 15px; margin: 0; }
+      .fb-zone-modes { display: inline-flex; padding: 2px; border: 1px solid #d5dee8; border-radius: 7px; background: #f1f4f7; }
+      .fb-zone-mode { padding: 3px 8px; border: 0; border-radius: 5px; background: transparent; color: #637386; font-size: 10px; cursor: pointer; }
+      .fb-zone-mode:hover { color: #315f8a; }
+      .fb-zone-mode.is-active { background: #fff; color: #315f8a; box-shadow: 0 1px 3px rgba(31,50,72,.14); }
       .fb-dependency-list { display: flex; flex-wrap: wrap; gap: 7px; }
       .fb-dependency {
         display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 4px 9px;
@@ -1651,15 +1767,16 @@
       .fb-popover-header { display: grid; gap: 2px; padding: 0 30px 8px 2px; }
       .fb-popover-close { position: absolute; right: 7px; top: 6px; width: 27px; height: 27px; border: 0; border-radius: 6px; background: transparent; color: #64748b; font-size: 18px; cursor: pointer; }
       .fb-popover-close:hover { background: #edf2f7; }
-      .fb-popover-card { display: grid; gap: 9px; padding: 10px 2px 4px; border-top: 1px solid #e4e9ef; }
+      .fb-popover-card { display: grid; gap: 9px; padding: 10px; border: 1px solid #e0e7ee; border-radius: 8px; background: #fbfcfd; }
+      .fb-popover-card + .fb-popover-card { margin-top: 8px; }
       .fb-popover-variable-heading { min-width: 0; display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 2px 7px; align-items: center; }
       .fb-popover-variable-heading strong { min-width: 0; overflow-wrap: anywhere; color: #2f3d4d; }
       .fb-popover-variable-heading code { grid-column: 2; overflow-wrap: anywhere; color: #8a95a3; font-size: 9px; }
       .fb-popover-meta { display: grid; grid-template-columns: 105px minmax(0, 1fr); gap: 5px 9px; margin: 0; padding: 8px; border-radius: 6px; background: #f7f9fb; }
       .fb-popover-meta dt { color: #7a8696; font-size: 10px; }
       .fb-popover-meta dd { min-width: 0; margin: 0; color: #3e4b5b; font-size: 11px; white-space: pre-line; overflow-wrap: anywhere; }
-      .fb-popover-open { justify-self: end; min-height: 28px; padding: 3px 9px; border: 1px solid #c8d4df; border-radius: 5px; background: #fff; color: #3e668b; font-size: 11px; cursor: pointer; }
-      .fb-popover-open:hover { border-color: #9fb6ca; background: #f5f8fa; }
+      .fb-popover-open { justify-self: end; padding: 2px 0; border: 0; background: transparent; color: #58799c; font-size: 10px; cursor: pointer; }
+      .fb-popover-open:hover { color: #255da9; text-decoration: underline; }
       @media (max-width: 820px) {
         .fb-window { min-width: calc(100vw - 24px); }
         .fb-workspace { grid-template-columns: 205px minmax(0, 1fr); }

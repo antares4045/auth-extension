@@ -248,7 +248,16 @@
       };
     }
 
-    function expandReferences(formula, node, path, warnings, maxDepth, budget, zones = null) {
+    function expandReferences(
+      formula,
+      node,
+      path,
+      warnings,
+      maxDepth,
+      budget,
+      zones = null,
+      depth = 0,
+    ) {
       const references = collectReferences(node);
       const positionalReplacements = [];
       let fallbackCursor = 0;
@@ -262,10 +271,13 @@
           addWarning(warnings, `Переменная не найдена: ${label}`);
           return;
         }
-        if (isTerminalVariable(dependency)) return;
-
         let nested;
-        if (path.includes(dependency.id)) {
+        const nestedZones = [];
+        let strippedPrefix = 0;
+        const zoneOnly = isTerminalVariable(dependency);
+        if (zoneOnly) {
+          if (!zones) return;
+        } else if (path.includes(dependency.id)) {
           const cycleStart = path.indexOf(dependency.id);
           const cycleIds = [...path.slice(cycleStart), dependency.id];
           const cycleNames = cycleIds.map(
@@ -292,13 +304,14 @@
             warnings,
             maxDepth,
             budget,
-            null,
+            zones ? nestedZones : null,
+            depth + 1,
           );
           if (expanded === null) return;
-          nested = expanded.replace(/^=/, '');
+          strippedPrefix = expanded.startsWith('=') ? 1 : 0;
+          nested = expanded.slice(strippedPrefix);
         }
 
-        const replacement = `(${nested})`;
         const positionedText = Number.isInteger(reference.start) && Number.isInteger(reference.length)
           ? formula.slice(reference.start, reference.start + reference.length)
           : '';
@@ -310,30 +323,33 @@
           positionedText.startsWith('[') && positionedText.endsWith(']') &&
           (!expectedText || positionedText === expectedText)
         );
+        let start;
+        let length;
         if (hasValidPosition) {
-          positionalReplacements.push({
-            start: reference.start,
-            length: reference.length,
-            replacement,
-            variableId: dependency.id,
-            label: dependency.name || dependency.id,
-          });
+          start = reference.start;
+          length = reference.length;
           fallbackCursor = Math.max(fallbackCursor, reference.start + reference.length);
         } else {
           const literal = reference.literal || dependency.name;
           if (!literal) return;
-          const start = findUnquotedVariable(formula, literal, fallbackCursor);
+          start = findUnquotedVariable(formula, literal, fallbackCursor);
           if (start < 0) return;
-          const length = literal.length + 2;
-          positionalReplacements.push({
-            start,
-            length,
-            replacement,
-            variableId: dependency.id,
-            label: dependency.name || dependency.id,
-          });
+          length = literal.length + 2;
           fallbackCursor = start + length;
         }
+
+        positionalReplacements.push({
+          start,
+          length,
+          replacement: zoneOnly
+            ? formula.slice(start, start + length)
+            : `(${nested})`,
+          variableId: dependency.id,
+          label: dependency.name || dependency.id,
+          nestedZones,
+          strippedPrefix,
+          zoneOnly,
+        });
       });
 
       const appliedReplacements = [];
@@ -353,20 +369,28 @@
         });
 
       if (zones) {
-        appliedReplacements
-          .map((item) => {
-            const shift = appliedReplacements.reduce((total, other) => (
-              other.start < item.start
-                ? total + other.replacement.length - other.length
-                : total
-            ), 0);
-            return {
-              start: item.start + shift,
-              length: item.replacement.length,
-              variableId: item.variableId,
-              label: item.label,
-            };
-          })
+        const mappedZones = [];
+        appliedReplacements.forEach((item) => {
+          const shift = appliedReplacements.reduce((total, other) => (
+            other.start < item.start
+              ? total + other.replacement.length - other.length
+              : total
+          ), 0);
+          const start = item.start + shift;
+          mappedZones.push({
+            start,
+            length: item.replacement.length,
+            variableId: item.variableId,
+            label: item.label,
+            depth,
+          });
+          const nestedOffset = item.zoneOnly ? start : start + 1 - item.strippedPrefix;
+          item.nestedZones.forEach((zone) => mappedZones.push({
+            ...zone,
+            start: nestedOffset + zone.start,
+          }));
+        });
+        mappedZones
           .sort((a, b) => a.start - b.start)
           .forEach((zone) => zones.push(zone));
       }
@@ -374,7 +398,7 @@
       return formula;
     }
 
-    function expandVariable(variable, path, warnings, maxDepth, budget, zones = null) {
+    function expandVariable(variable, path, warnings, maxDepth, budget, zones = null, depth = 0) {
       let formula =
         variable.parsedFormula?.source ||
         variable.formula;
@@ -402,7 +426,17 @@
         maxDepth,
         budget,
         zones,
+        depth,
       );
+    }
+
+    function publicZone(zone) {
+      return {
+        start: zone.start,
+        length: zone.length,
+        variableId: zone.variableId,
+        label: zone.label,
+      };
     }
 
     function expandFormula(variableId, options = {}) {
@@ -425,17 +459,27 @@
           formula: '',
           warnings: [`Переменная ${variableId} не найдена`],
           zones: [],
+          allZones: [],
         };
       }
 
       const warnings = [];
-      const zones = [];
+      const collectedZones = [];
       const maxDepth = options.maxDepth ?? 40;
       const budget = createExpansionBudget(options);
-      return {
-        formula: expandVariable(variable, [variable.id], warnings, maxDepth, budget, zones) ?? '',
+      const formula = expandVariable(
+        variable,
+        [variable.id],
         warnings,
-        zones,
+        maxDepth,
+        budget,
+        collectedZones,
+      ) ?? '';
+      return {
+        formula,
+        warnings,
+        zones: collectedZones.filter((zone) => zone.depth === 0).map(publicZone),
+        allZones: collectedZones.map(publicZone),
       };
     }
 
@@ -461,7 +505,7 @@
 
     function expandExpressionDetailed(formula, node, options = {}) {
       const warnings = [];
-      const zones = [];
+      const collectedZones = [];
       const maxDepth = options.maxDepth ?? 40;
       const budget = createExpansionBudget(options);
       if (formula.length > budget.maxLength) {
@@ -472,13 +516,24 @@
         return {
           formula: formula.slice(0, budget.maxLength),
           warnings,
-          zones,
+          zones: [],
+          allZones: [],
         };
       }
-      return {
-        formula: expandReferences(formula, node, [], warnings, maxDepth, budget, zones),
+      const expandedFormula = expandReferences(
+        formula,
+        node,
+        [],
         warnings,
-        zones,
+        maxDepth,
+        budget,
+        collectedZones,
+      );
+      return {
+        formula: expandedFormula,
+        warnings,
+        zones: collectedZones.filter((zone) => zone.depth === 0).map(publicZone),
+        allZones: collectedZones.map(publicZone),
       };
     }
 

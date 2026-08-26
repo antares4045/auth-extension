@@ -11,8 +11,8 @@ test('различает неограниченный, ограниченный 
   assert.deepEqual(FormulaBrowserCore.parseExpansionDepth(0), { kind: 'invalid' });
   assert.deepEqual(FormulaBrowserCore.parseExpansionDepth(-2), { kind: 'invalid' });
   assert.deepEqual(FormulaBrowserCore.parseExpansionDepth('не число'), { kind: 'invalid' });
+  assert.deepEqual(FormulaBrowserCore.parseExpansionDepth(2.8), { kind: 'invalid' });
   assert.deepEqual(FormulaBrowserCore.parseExpansionDepth('3'), { kind: 'limited', value: 3 });
-  assert.deepEqual(FormulaBrowserCore.parseExpansionDepth(2.8), { kind: 'limited', value: 2 });
 });
 
 test('ограничивает подпись длинного списка DP-источников до объединения строки', () => {

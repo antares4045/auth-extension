@@ -58,8 +58,8 @@
       return { kind: 'unlimited' };
     }
     const depth = Number(value);
-    if (!Number.isFinite(depth) || depth < 1) return { kind: 'invalid' };
-    return { kind: 'limited', value: Math.floor(depth) };
+    if (!Number.isInteger(depth) || depth < 1) return { kind: 'invalid' };
+    return { kind: 'limited', value: depth };
   }
 
   function summarizeSourceNames(sources, options = {}) {

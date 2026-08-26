@@ -249,7 +249,8 @@
         remainingNodes: maxNodes,
         maxLength,
         maxZones,
-        remainingZones: maxZones,
+        remainingDirectZones: maxZones,
+        remainingAllZones: maxZones,
       };
     }
 
@@ -281,11 +282,16 @@
         const nestedZones = [];
         let strippedPrefix = 0;
         const zoneOnly = isTerminalVariable(dependency);
-        const trackZone = Boolean(zones && budget.remainingZones > 0);
-        if (zones && !trackZone) {
+        const includeDirect = Boolean(
+          zones && depth === 0 && budget.remainingDirectZones > 0,
+        );
+        const includeAll = Boolean(zones && budget.remainingAllZones > 0);
+        const trackZone = includeDirect || includeAll;
+        if (zones && (!includeAll || (depth === 0 && !includeDirect))) {
           addWarning(warnings, `Достигнут предел зонирования (${budget.maxZones})`);
         }
-        if (trackZone) budget.remainingZones -= 1;
+        if (includeDirect) budget.remainingDirectZones -= 1;
+        if (includeAll) budget.remainingAllZones -= 1;
         if (zoneOnly) {
           if (!trackZone) return;
         } else if (path.includes(dependency.id)) {
@@ -314,7 +320,7 @@
             [...path, dependency.id],
             {
               ...context,
-              zones: zones && budget.remainingZones > 0 ? nestedZones : null,
+              zones: zones && budget.remainingAllZones > 0 ? nestedZones : null,
             },
             depth + 1,
           );
@@ -361,24 +367,48 @@
           strippedPrefix,
           zoneOnly,
           trackZone,
+          includeDirect,
+          includeAll,
         });
       });
 
-      const appliedReplacements = [];
+      const acceptedReplacements = [];
+      let projectedLength = formula.length;
       positionalReplacements
         .sort((a, b) => b.start - a.start)
         .forEach((item) => {
-          const { start, length, replacement } = item;
-          if (formula.length - length + replacement.length > budget.maxLength) {
+          const { length, replacement } = item;
+          const nextLength = projectedLength - length + replacement.length;
+          if (nextLength > budget.maxLength) {
             addWarning(
               warnings,
               `Достигнут предел длины раскрытой формулы (${budget.maxLength} символов)`,
             );
             return;
           }
-          formula = `${formula.slice(0, start)}${replacement}${formula.slice(start + length)}`;
+          projectedLength = nextLength;
+          acceptedReplacements.push(item);
+        });
+
+      const appliedReplacements = [];
+      const formulaParts = [];
+      let formulaCursor = 0;
+      acceptedReplacements
+        .sort((a, b) => a.start - b.start)
+        .forEach((item) => {
+          if (item.start < formulaCursor) {
+            addWarning(warnings, 'Пропущены пересекающиеся ссылки в дереве формулы');
+            return;
+          }
+          formulaParts.push(
+            formula.slice(formulaCursor, item.start),
+            item.replacement,
+          );
+          formulaCursor = item.start + item.length;
           appliedReplacements.push(item);
         });
+      formulaParts.push(formula.slice(formulaCursor));
+      formula = formulaParts.join('');
 
       if (zones) {
         const mappedZones = [];
@@ -396,6 +426,8 @@
               variableId: item.variableId,
               label: item.label,
               depth,
+              includeDirect: item.includeDirect,
+              includeAll: item.includeAll,
             });
             const nestedOffset = item.zoneOnly ? start : start + 1 - item.strippedPrefix;
             item.nestedZones.forEach((zone) => mappedZones.push({
@@ -484,8 +516,8 @@
       return {
         formula,
         warnings,
-        zones: collectedZones.filter((zone) => zone.depth === 0).map(publicZone),
-        allZones: collectedZones.map(publicZone),
+        zones: collectedZones.filter((zone) => zone.includeDirect).map(publicZone),
+        allZones: collectedZones.filter((zone) => zone.includeAll).map(publicZone),
       };
     }
 
@@ -533,8 +565,8 @@
       return {
         formula: expandedFormula,
         warnings,
-        zones: collectedZones.filter((zone) => zone.depth === 0).map(publicZone),
-        allZones: collectedZones.map(publicZone),
+        zones: collectedZones.filter((zone) => zone.includeDirect).map(publicZone),
+        allZones: collectedZones.filter((zone) => zone.includeAll).map(publicZone),
       };
     }
 

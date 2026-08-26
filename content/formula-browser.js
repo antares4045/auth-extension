@@ -1445,14 +1445,19 @@
 
     let candidateCursor = 0;
     const renderCandidateBatch = () => {
-      popover.querySelector('.fb-popover-more')?.remove();
+      const previousMore = popover.querySelector('.fb-popover-more');
+      const restoreBatchFocus = state.shadow.activeElement === previousMore;
+      previousMore?.remove();
       const batch = uniqueCandidateIds.slice(
         candidateCursor,
         candidateCursor + POPOVER_CANDIDATE_BATCH,
       );
+      let firstNewAction = null;
       batch.forEach((id) => {
         const card = variablePopoverCard(id);
-        if (card) popover.appendChild(card);
+        if (!card) return;
+        if (!firstNewAction) firstNewAction = card.querySelector('.fb-popover-open');
+        popover.appendChild(card);
       });
       candidateCursor += batch.length;
       if (candidateCursor < uniqueCandidateIds.length) {
@@ -1464,12 +1469,16 @@
         more.type = 'button';
         more.addEventListener('click', renderCandidateBatch);
         popover.appendChild(more);
+        if (restoreBatchFocus) more.focus();
       } else if (candidateIds.length > POPOVER_CANDIDATE_LIMIT) {
         popover.appendChild(element(
           'div',
           'fb-muted',
           `Показаны первые ${POPOVER_CANDIDATE_LIMIT} совпадений`,
         ));
+        if (restoreBatchFocus) (firstNewAction || close).focus();
+      } else if (restoreBatchFocus) {
+        (firstNewAction || close).focus();
       }
     };
     renderCandidateBatch();

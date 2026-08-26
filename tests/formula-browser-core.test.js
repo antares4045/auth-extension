@@ -549,6 +549,37 @@ test('ограничивает число зон для формулы с мно
   assert.match(expansion.warnings.join('\n'), /предел зонирования \(3\)/);
 });
 
+test('вложенные зоны не вытесняют соседей из режима верхнего уровня', () => {
+  const model = FormulaBrowserCore.createModel([
+    {
+      id: 'root', name: 'Root', formula: '=[A]+[B]',
+      parsedFormula: { root: { nodeType: 'function', args: [
+        { nodeType: 'var', varId: 'a', literal: 'A', start: 1, length: 3 },
+        { nodeType: 'var', varId: 'b', literal: 'B', start: 5, length: 3 },
+      ] } },
+    },
+    {
+      id: 'a', name: 'A', formula: '=[Leaf]',
+      parsedFormula: { root: {
+        nodeType: 'var', varId: 'leaf', literal: 'Leaf', start: 1, length: 6,
+      } },
+    },
+    { id: 'b', name: 'B', formula: '=2', parsedFormula: { root: null } },
+    { id: 'leaf', name: 'Leaf', varType: 'DP' },
+  ], []);
+
+  const expansion = model.expandFormulaDetailed('root', { maxZones: 2 });
+
+  assert.deepEqual(
+    expansion.zones.map((zone) => zone.variableId),
+    ['a', 'b'],
+  );
+  assert.deepEqual(
+    expansion.allZones.map((zone) => zone.variableId),
+    ['a', 'leaf'],
+  );
+});
+
 test('поиск принимает имя с одной или двумя квадратными скобками', () => {
   const model = FormulaBrowserCore.createModel([
     { id: 'income', name: 'Доход с НДС' },

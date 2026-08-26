@@ -164,15 +164,17 @@
       return null;
     }
 
-    function getDependencySources(variableId, options = {}) {
+    function getDependencySourceInfo(variableId, options = {}) {
       const maxNodes = Number.isFinite(options.maxNodes)
         ? Math.max(0, Math.floor(options.maxNodes))
         : 2000;
-      const stack = [variableId];
+      const stack = maxNodes > 0 ? [variableId] : [];
+      const scheduled = new Set(stack);
       const visited = new Set();
       const sources = new Map();
+      let truncated = maxNodes === 0;
 
-      while (stack.length && visited.size < maxNodes) {
+      while (stack.length) {
         const currentId = stack.pop();
         if (visited.has(currentId)) continue;
         visited.add(currentId);
@@ -185,11 +187,24 @@
           continue;
         }
         getDependencies(currentId).forEach((dependency) => {
-          if (!visited.has(dependency.id)) stack.push(dependency.id);
+          if (visited.has(dependency.id) || scheduled.has(dependency.id)) return;
+          if (scheduled.size >= maxNodes) {
+            truncated = true;
+            return;
+          }
+          scheduled.add(dependency.id);
+          stack.push(dependency.id);
         });
       }
 
-      return Array.from(sources.values());
+      return {
+        sources: Array.from(sources.values()),
+        truncated,
+      };
+    }
+
+    function getDependencySources(variableId, options = {}) {
+      return getDependencySourceInfo(variableId, options).sources;
     }
 
     function addWarning(warnings, warning) {
@@ -570,6 +585,7 @@
       expandFormulaDetailed,
       expandFormula,
       findVariable,
+      getDependencySourceInfo,
       getDependencySources,
       getDependencies,
       getSourceInfo,

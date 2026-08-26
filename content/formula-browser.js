@@ -9,14 +9,18 @@
       'M5 11H14V2H5V11ZM7 4H12V9H7V4Z',
     ],
     measure: [
-      'M11 5L0 16H11V5ZM5 14L9 10V14H5Z',
+      'M11 5L0 16C4.22329 16 11 16 11 16C11 14.7331 11 5 11 5ZM5 14L9 10V14H5Z',
       'M12 16V0H14V1H16V3H14V5H16V7H14V9H16V11H14V13H16V15H14V16H12Z',
     ],
     attribute: [
-      'M2 0L4 3H3V10H1V3H0L2 0Z',
-      'M13 13V12L16 14L13 16V15H6V13H13Z',
-      'M7 11H13V3H5V9H7V11ZM7 5H11V9H7V5Z',
-      'M1.6 12H2.4V13.6H4V14.4H2.4V16H1.6V14.4H0V13.6H1.6V12Z',
+      'M2.00002 0L4.00002 3H3.00002L2.99996 9.9999L0.99997 10L1.00002 3H0.0000194152L2.00002 0Z',
+      'M13 13V12L16 14L13 16V15H6.00002V13H13Z',
+      'M7 11H13V3.00002H5.00002L5.00001 8.99999H7V11ZM7 4.99999H11V8.99999H7V4.99999Z',
+      'M1.6 11.9998H2.4V13.5998H3.99999V14.3998H2.4V15.9998H1.6V14.3998H0V13.5998H1.6V11.9998Z',
+      'M2.99999 12.9998V11.9998H3.99999V12.9998H2.99999Z',
+      'M2.99999 14.9998H3.99999L3.99999 15.9998H2.99999V14.9998Z',
+      'M1 14.9998V15.9998H0L0 14.9998H1Z',
+      'M1 12.9998H0.0000000655668V11.9998H1V12.9998Z',
     ],
   };
   if (!core) {
@@ -538,8 +542,8 @@
           .includes(filter);
       })
       .sort((a, b) => variableLabel(a).localeCompare(variableLabel(b), 'ru'));
-    const regular = matches.filter((variable) => variable.varType !== 'Formula');
-    const anonymous = matches.filter((variable) => variable.varType === 'Formula');
+    const regular = matches.filter((variable) => variableSection(variable) !== 'anonymous');
+    const anonymous = matches.filter((variable) => variableSection(variable) === 'anonymous');
 
     if (state.variableGrouping === 'alphabet') {
       target.appendChild(variableListGroup('Все переменные', regular));
@@ -557,7 +561,7 @@
   }
 
   function renderRequestGroups(target, variables) {
-    const directDpVariables = variables.filter((variable) => variable.varType === 'DP');
+    const directDpVariables = variables.filter((variable) => variableSection(variable) === 'request');
     const knownDpIds = new Set(state.dps.map((dp) => String(dp.dp_id)));
     let renderedGroups = 0;
 
@@ -583,14 +587,12 @@
       renderedGroups += 1;
     });
 
-    const merge = variables.filter((variable) => variable.varType === 'Merge');
+    const merge = variables.filter((variable) => variableSection(variable) === 'merge');
     if (merge.length) {
       target.appendChild(variableListGroup('Объединённые переменные', merge));
       renderedGroups += 1;
     }
-    const general = variables.filter(
-      (variable) => variable.varType !== 'DP' && variable.varType !== 'Merge',
-    );
+    const general = variables.filter((variable) => variableSection(variable) === 'general');
     if (general.length) {
       target.appendChild(variableListGroup('Пользовательские переменные', general));
       renderedGroups += 1;
@@ -625,12 +627,19 @@
       element(
         'span',
         'fb-sidebar-item-meta',
-        cardinalityLabel(variable.type),
+        objectTypeLabel(variable.type),
       ),
     );
     button.title = `${variable.id} · ${variable.type || 'неизвестный type'} · ${variable.varType || 'неизвестный varType'}`;
     button.addEventListener('click', () => navigate({ kind: 'variable', id: variable.id }));
     return button;
+  }
+
+  function variableSection(variable) {
+    if (variable?.varType === 'DP') return 'request';
+    if (variable?.varType === 'Merge') return 'merge';
+    if (variable?.varType === 'Formula') return 'anonymous';
+    return 'general';
   }
 
   function renderHistoryList() {
@@ -945,7 +954,10 @@
 
       const source = state.model.getSourceInfo(variable.id);
       if (source?.sources?.length) {
-        row.appendChild(element('span', 'fb-tree-note', source.sources.map((s) => s.dpName).join(', ')));
+        const sourceNames = source.sources.map((item) => item.dpName).join(', ');
+        const note = element('span', 'fb-tree-note', sourceNames);
+        note.title = sourceNames;
+        row.appendChild(note);
       }
       item.appendChild(row);
 
@@ -1142,15 +1154,19 @@
       );
       const meta = element('dl', 'fb-popover-meta');
       appendDefinition(meta, 'Тип', variable.varType || 'Unknown');
-      appendDefinition(meta, 'Кардинальность', cardinalityLabel(variable.type));
+      appendDefinition(meta, 'Кардинальность', objectTypeLabel(variable.type));
       appendDefinition(meta, 'Данные', variable.dataType || '—');
-      const sources = state.model.getDependencySources(variable.id);
+      const sourceInfo = state.model.getDependencySourceInfo(variable.id);
+      const sources = sourceInfo.sources;
+      const sourceDescription = sources.length
+        ? sources.map((source) => `${source.dpName || source.dpId} · ${source.objectId || '—'}`).join('\n')
+        : sourceInfo.truncated
+          ? 'DP не найден в пределах лимита обхода'
+          : 'Нет достижимого DP-источника';
       appendDefinition(
         meta,
         'DP',
-        sources.length
-          ? sources.map((source) => `${source.dpName || source.dpId} · ${source.objectId || '—'}`).join('\n')
-          : 'Нет достижимого DP-источника',
+        sourceInfo.truncated ? `${sourceDescription}\n… показан частичный результат` : sourceDescription,
       );
       const open = element('button', 'fb-popover-open', 'Открыть переменную');
       open.type = 'button';
@@ -1219,7 +1235,7 @@
     return svg;
   }
 
-  function cardinalityLabel(type) {
+  function objectTypeLabel(type) {
     return typeof type === 'string' && type.length ? type : 'Unknown';
   }
 
@@ -1468,9 +1484,9 @@
       .fb-tree-toggle, .fb-tree-toggle-spacer { flex: 0 0 16px; width: 16px; height: 18px; }
       .fb-tree-toggle { padding: 0; border: 0; border-radius: 3px; background: transparent; color: #64748b; line-height: 1; cursor: pointer; }
       .fb-tree-toggle:hover { background: #edf2f7; color: #255da9; }
-      .fb-tree-link { min-width: 0; padding: 1px 0; border: 0; background: transparent; color: #255da9; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+      .fb-tree-link { flex: 1 1 55%; min-width: 90px; padding: 1px 0; border: 0; background: transparent; color: #255da9; text-align: left; overflow-wrap: break-word; cursor: pointer; }
       .fb-tree-link:hover { text-decoration: underline; }
-      .fb-tree-note { margin-left: auto; color: #8492a6; font-size: 10px; white-space: nowrap; }
+      .fb-tree-note { flex: 0 1 40%; min-width: 0; max-width: 40%; margin-left: auto; overflow: hidden; color: #8492a6; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
       .fb-cycle { margin: 2px 0 2px 17px; color: #aa6716; font-size: 11px; }
       .fb-muted { margin: 0; color: #718096; }
       .fb-empty { min-height: 100%; display: grid; place-content: center; justify-items: center; padding: 30px; color: #64748b; text-align: center; }

@@ -517,4 +517,8 @@ test('собирает уникальные DP-источники через в�
     { dpId: 'DP2', dpName: 'Возвраты', objectId: 'DP2.2' },
     { dpId: 'DP1', dpName: 'Продажи', objectId: 'dp-a' },
   ]);
+  assert.deepEqual(model.getDependencySourceInfo('root', { maxNodes: 1 }), {
+    sources: [],
+    truncated: true,
+  });
 });

@@ -266,7 +266,7 @@
     function expandReferences(formula, node, path, context, depth = 0) {
       const { warnings, maxDepth, budget, zones } = context;
       const references = collectReferences(node);
-      const positionalReplacements = [];
+      const positionedReferences = [];
       let fallbackCursor = 0;
 
       references.forEach((reference) => {
@@ -278,57 +278,6 @@
           addWarning(warnings, `Переменная не найдена: ${label}`);
           return;
         }
-        let nested;
-        const nestedZones = [];
-        let strippedPrefix = 0;
-        const zoneOnly = isTerminalVariable(dependency);
-        const includeDirect = Boolean(
-          zones && depth === 0 && budget.remainingDirectZones > 0,
-        );
-        const includeAll = Boolean(zones && budget.remainingAllZones > 0);
-        const trackZone = includeDirect || includeAll;
-        if (zones && (!includeAll || (depth === 0 && !includeDirect))) {
-          addWarning(warnings, `Достигнут предел зонирования (${budget.maxZones})`);
-        }
-        if (includeDirect) budget.remainingDirectZones -= 1;
-        if (includeAll) budget.remainingAllZones -= 1;
-        if (zoneOnly) {
-          if (!trackZone) return;
-        } else if (path.includes(dependency.id)) {
-          const cycleStart = path.indexOf(dependency.id);
-          const cycleIds = [...path.slice(cycleStart), dependency.id];
-          const cycleNames = cycleIds.map(
-            (id) => variablesById.get(id)?.name || id,
-          );
-          const warning = `Циклическая ссылка: ${cycleNames.join(' → ')}`;
-          addWarning(warnings, warning);
-          nested = `[${dependency.name || dependency.id}]`;
-        } else if (path.length >= maxDepth) {
-          const warning = `Достигнут предел раскрытия (${maxDepth}): ${dependency.name || dependency.id}`;
-          addWarning(warnings, warning);
-          nested = `[${dependency.name || dependency.id}]`;
-        } else if (budget.remainingNodes <= 0) {
-          addWarning(
-            warnings,
-            `Достигнут предел раскрытия по количеству узлов (${budget.maxNodes})`,
-          );
-          nested = `[${dependency.name || dependency.id}]`;
-        } else {
-          budget.remainingNodes -= 1;
-          const expanded = expandVariable(
-            dependency,
-            [...path, dependency.id],
-            {
-              ...context,
-              zones: zones && budget.remainingAllZones > 0 ? nestedZones : null,
-            },
-            depth + 1,
-          );
-          if (expanded === null) return;
-          strippedPrefix = expanded.startsWith('=') ? 1 : 0;
-          nested = expanded.slice(strippedPrefix);
-        }
-
         const positionedText = Number.isInteger(reference.start) && Number.isInteger(reference.length)
           ? formula.slice(reference.start, reference.start + reference.length)
           : '';
@@ -355,51 +304,122 @@
           fallbackCursor = start + length;
         }
 
-        positionalReplacements.push({
+        positionedReferences.push({
+          dependency,
           start,
           length,
-          replacement: zoneOnly
-            ? formula.slice(start, start + length)
-            : `(${nested})`,
-          variableId: dependency.id,
-          label: dependency.name || dependency.id,
-          nestedZones,
-          strippedPrefix,
-          zoneOnly,
-          trackZone,
-          includeDirect,
-          includeAll,
         });
       });
 
       const acceptedReplacements = [];
       let projectedLength = formula.length;
-      positionalReplacements
-        .sort((a, b) => b.start - a.start)
-        .forEach((item) => {
-          const { length, replacement } = item;
+      let acceptedEnd = 0;
+      positionedReferences
+        .sort((a, b) => a.start - b.start)
+        .forEach(({ dependency, start, length }) => {
+          if (start < acceptedEnd) {
+            addWarning(warnings, 'Пропущены пересекающиеся ссылки в дереве формулы');
+            return;
+          }
+
+          const budgetBefore = {
+            remainingNodes: budget.remainingNodes,
+            remainingDirectZones: budget.remainingDirectZones,
+            remainingAllZones: budget.remainingAllZones,
+          };
+          const restoreBudget = () => {
+            budget.remainingNodes = budgetBefore.remainingNodes;
+            budget.remainingDirectZones = budgetBefore.remainingDirectZones;
+            budget.remainingAllZones = budgetBefore.remainingAllZones;
+          };
+          let nested;
+          const nestedZones = [];
+          let strippedPrefix = 0;
+          const zoneOnly = isTerminalVariable(dependency);
+          const includeDirect = Boolean(
+            zones && depth === 0 && budget.remainingDirectZones > 0,
+          );
+          const includeAll = Boolean(zones && budget.remainingAllZones > 0);
+          const trackZone = includeDirect || includeAll;
+          if (zones && (!includeAll || (depth === 0 && !includeDirect))) {
+            addWarning(warnings, `Достигнут предел зонирования (${budget.maxZones})`);
+          }
+          if (includeDirect) budget.remainingDirectZones -= 1;
+          if (includeAll) budget.remainingAllZones -= 1;
+          if (zoneOnly) {
+            if (!trackZone) return;
+          } else if (path.includes(dependency.id)) {
+            const cycleStart = path.indexOf(dependency.id);
+            const cycleIds = [...path.slice(cycleStart), dependency.id];
+            const cycleNames = cycleIds.map(
+              (id) => variablesById.get(id)?.name || id,
+            );
+            const warning = `Циклическая ссылка: ${cycleNames.join(' → ')}`;
+            addWarning(warnings, warning);
+            nested = `[${dependency.name || dependency.id}]`;
+          } else if (path.length >= maxDepth) {
+            const warning = `Достигнут предел раскрытия (${maxDepth}): ${dependency.name || dependency.id}`;
+            addWarning(warnings, warning);
+            nested = `[${dependency.name || dependency.id}]`;
+          } else if (budget.remainingNodes <= 0) {
+            addWarning(
+              warnings,
+              `Достигнут предел раскрытия по количеству узлов (${budget.maxNodes})`,
+            );
+            nested = `[${dependency.name || dependency.id}]`;
+          } else {
+            budget.remainingNodes -= 1;
+            const expanded = expandVariable(
+              dependency,
+              [...path, dependency.id],
+              {
+                ...context,
+                zones: zones && budget.remainingAllZones > 0 ? nestedZones : null,
+              },
+              depth + 1,
+            );
+            if (expanded === null) {
+              restoreBudget();
+              return;
+            }
+            strippedPrefix = expanded.startsWith('=') ? 1 : 0;
+            nested = expanded.slice(strippedPrefix);
+          }
+
+          const replacement = zoneOnly
+            ? formula.slice(start, start + length)
+            : `(${nested})`;
           const nextLength = projectedLength - length + replacement.length;
           if (nextLength > budget.maxLength) {
             addWarning(
               warnings,
               `Достигнут предел длины раскрытой формулы (${budget.maxLength} символов)`,
             );
+            restoreBudget();
             return;
           }
           projectedLength = nextLength;
-          acceptedReplacements.push(item);
+          acceptedEnd = start + length;
+          acceptedReplacements.push({
+            start,
+            length,
+            replacement,
+            variableId: dependency.id,
+            label: dependency.name || dependency.id,
+            nestedZones,
+            strippedPrefix,
+            zoneOnly,
+            trackZone,
+            includeDirect,
+            includeAll,
+          });
         });
 
       const appliedReplacements = [];
       const formulaParts = [];
       let formulaCursor = 0;
       acceptedReplacements
-        .sort((a, b) => a.start - b.start)
         .forEach((item) => {
-          if (item.start < formulaCursor) {
-            addWarning(warnings, 'Пропущены пересекающиеся ссылки в дереве формулы');
-            return;
-          }
           formulaParts.push(
             formula.slice(formulaCursor, item.start),
             item.replacement,

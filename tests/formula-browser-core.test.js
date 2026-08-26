@@ -580,6 +580,26 @@ test('вложенные зоны не вытесняют соседей из р
   );
 });
 
+test('неуспешная ссылка не расходует зону следующей корректной переменной', () => {
+  const model = FormulaBrowserCore.createModel([
+    {
+      id: 'root', name: 'Root', formula: '=[A]+[B]',
+      parsedFormula: { root: { nodeType: 'function', args: [
+        { nodeType: 'var', varId: 'a', literal: 'A', start: 1, length: 3 },
+        { nodeType: 'var', varId: 'b', literal: 'B', start: 5, length: 3 },
+      ] } },
+    },
+    { id: 'a', name: 'A' },
+    { id: 'b', name: 'B', formula: '=2', parsedFormula: { root: null } },
+  ], []);
+
+  const expansion = model.expandFormulaDetailed('root', { maxZones: 1 });
+
+  assert.equal(expansion.formula, '=[A]+(2)');
+  assert.deepEqual(expansion.zones.map((zone) => zone.variableId), ['b']);
+  assert.deepEqual(expansion.allZones.map((zone) => zone.variableId), ['b']);
+});
+
 test('поиск принимает имя с одной или двумя квадратными скобками', () => {
   const model = FormulaBrowserCore.createModel([
     { id: 'income', name: 'Доход с НДС' },

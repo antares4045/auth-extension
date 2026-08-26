@@ -748,6 +748,21 @@
       return tokens;
     }
 
+    function matchParentheses(tokens) {
+      const stack = [];
+      const pairs = [];
+      (Array.isArray(tokens) ? tokens : []).forEach((token) => {
+        if (token?.kind !== 'punctuation' || !Number.isInteger(token.start)) return;
+        if (token.text === '(') {
+          stack.push(token.start);
+          return;
+        }
+        if (token.text !== ')' || !stack.length) return;
+        pairs.push({ open: stack.pop(), close: token.start });
+      });
+      return pairs.sort((left, right) => left.open - right.open);
+    }
+
     return {
       expandExpressionDetailed,
       expandExpression,
@@ -758,6 +773,7 @@
       getDependencySources,
       getDependencies,
       getSourceInfo,
+      matchParentheses,
       tokenizeFormula,
     };
   }

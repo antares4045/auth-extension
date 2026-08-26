@@ -471,6 +471,18 @@ test('разбивает формулу на синтаксические ток
   );
 });
 
+test('сопоставляет вложенные круглые скобки, не затрагивая строки и переменные', () => {
+  const model = FormulaBrowserCore.createModel([
+    { id: 'a', name: 'a(b)', type: 'Measure', varType: 'DP' },
+  ], []);
+  const tokens = model.tokenizeFormula("=max(([a(b)]+1), '(текст)')) + )");
+
+  assert.deepEqual(model.matchParentheses(tokens), [
+    { open: 4, close: 26 },
+    { open: 5, close: 14 },
+  ]);
+});
+
 test('находит ссылки по имени в раскрытой формуле и не ломается на одноимённых переменных', () => {
   const model = FormulaBrowserCore.createModel([
     { id: 'a', name: 'Источник', type: 'Dimension', varType: 'DP' },

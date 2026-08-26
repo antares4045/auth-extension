@@ -6,6 +6,7 @@
   const ZONE_MODE_STORAGE_KEY = 'formulaBrowserZoneMode';
   const EXPANSION_OPEN_STORAGE_KEY = 'formulaBrowserExpansionOpen';
   const EXPANSION_DEPTH_STORAGE_KEY = 'formulaBrowserExpansionDepth';
+  const PARENTHESIS_HIGHLIGHT_STORAGE_KEY = 'formulaBrowserParenthesisHighlight';
   const POPOVER_CANDIDATE_LIMIT = 100;
   const POPOVER_CANDIDATE_BATCH = 10;
   const POPOVER_SOURCE_LIMIT = 5;
@@ -54,6 +55,7 @@
     zoneMode: 'none',
     expansionOpen: false,
     expansionDepth: { kind: 'unlimited' },
+    parenthesisHighlight: true,
     preferencesLoaded: false,
     preferencesPromise: null,
     popover: null,
@@ -141,7 +143,13 @@
             <textarea id="fb-formula" rows="2" maxlength="200000" spellcheck="false" placeholder="=max([a] where ([b] &lt; [c]))"></textarea>
             <button id="fb-analyze" class="fb-button fb-button-primary" type="button">Анализировать</button>
           </div>
-          <div class="fb-shortcuts">Ctrl+Enter — анализ · Alt+←/→ — история · двойной клик по переменной — перейти · Esc — скрыть</div>
+          <div class="fb-editor-meta">
+            <div class="fb-shortcuts">Ctrl+Enter — анализ · Alt+←/→ — история · двойной клик по переменной — перейти · Esc — скрыть</div>
+            <label class="fb-parenthesis-control">
+              <input id="fb-parenthesis-highlight" type="checkbox" checked />
+              <span>Подсвечивать скобки</span>
+            </label>
+          </div>
         </div>
 
         <div class="fb-workspace">
@@ -192,6 +200,15 @@
     $('fb-forward').addEventListener('click', goForward);
     $('fb-refresh').addEventListener('click', () => loadData(true));
     $('fb-analyze').addEventListener('click', analyzeFormula);
+    $('fb-parenthesis-highlight').addEventListener('change', (event) => {
+      state.parenthesisHighlight = event.currentTarget.checked;
+      persistUiPreference(
+        PARENTHESIS_HIGHLIGHT_STORAGE_KEY,
+        state.parenthesisHighlight,
+        'Не удалось сохранить подсветку парных скобок',
+      );
+      if (!state.parenthesisHighlight) clearAllParenthesisHighlights();
+    });
     $('fb-search-form').addEventListener('submit', openSearchResult);
     $('fb-search').addEventListener('keydown', (event) => {
       if (event.key !== 'Enter' || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
@@ -551,6 +568,7 @@
             ZONE_MODE_STORAGE_KEY,
             EXPANSION_OPEN_STORAGE_KEY,
             EXPANSION_DEPTH_STORAGE_KEY,
+            PARENTHESIS_HIGHLIGHT_STORAGE_KEY,
           ]);
           const grouping = stored?.[GROUPING_STORAGE_KEY];
           setVariableGrouping(grouping === 'alphabet' ? 'alphabet' : 'request', false);
@@ -560,12 +578,16 @@
           state.expansionOpen = stored?.[EXPANSION_OPEN_STORAGE_KEY] === true;
           const depth = core.parseExpansionDepth(stored?.[EXPANSION_DEPTH_STORAGE_KEY]);
           state.expansionDepth = depth.kind === 'invalid' ? { kind: 'unlimited' } : depth;
+          state.parenthesisHighlight = stored?.[PARENTHESIS_HIGHLIGHT_STORAGE_KEY] !== false;
         } catch {
           setVariableGrouping('request', false);
           state.zoneMode = 'none';
           state.expansionOpen = false;
           state.expansionDepth = { kind: 'unlimited' };
+          state.parenthesisHighlight = true;
         } finally {
+          state.shadow.getElementById('fb-parenthesis-highlight').checked =
+            state.parenthesisHighlight;
           state.preferencesLoaded = true;
         }
       })();
@@ -1338,6 +1360,7 @@
       ? state.model.tokenizeFormula(syntaxSource, root)
       : [{ kind: 'text', text: syntaxSource, start: 0, length: syntaxSource.length }];
     const tokens = allTokens.slice(0, 5000);
+    const parenthesisPairs = state.model?.matchParentheses(tokens) || [];
     const highlightedEnd = tokens.length
       ? tokens[tokens.length - 1].start + tokens[tokens.length - 1].length
       : 0;
@@ -1361,7 +1384,46 @@
       tail.title = 'Для производительности подсветка ограничена первыми 5000 токенами / 50000 символами';
       block.appendChild(tail);
     }
+    bindParenthesisHighlights(block, parenthesisPairs);
     return block;
+  }
+
+  function clearParenthesisHighlight(block) {
+    block.querySelectorAll('.is-parenthesis-pair, .is-parenthesis-scope').forEach((node) => {
+      node.classList.remove('is-parenthesis-pair', 'is-parenthesis-scope');
+    });
+  }
+
+  function clearAllParenthesisHighlights() {
+    state.shadow?.querySelectorAll('.fb-code-rich').forEach(clearParenthesisHighlight);
+  }
+
+  function bindParenthesisHighlights(block, pairs) {
+    if (!pairs.length) return;
+    const pairByPosition = new Map();
+    pairs.forEach((pair) => {
+      pairByPosition.set(pair.open, pair);
+      pairByPosition.set(pair.close, pair);
+    });
+    block.querySelectorAll('.fb-token-punctuation[data-formula-start]').forEach((node) => {
+      const pair = pairByPosition.get(Number(node.dataset.formulaStart));
+      if (!pair) return;
+      node.classList.add('fb-parenthesis');
+      node.addEventListener('mouseenter', () => {
+        clearParenthesisHighlight(block);
+        if (!state.parenthesisHighlight) return;
+        block.querySelectorAll('.fb-formula-segment[data-formula-start]').forEach((segment) => {
+          const start = Number(segment.dataset.formulaStart);
+          const end = Number(segment.dataset.formulaEnd);
+          if (start === pair.open || start === pair.close) {
+            segment.classList.add('is-parenthesis-pair');
+          } else if (start > pair.open && end <= pair.close) {
+            segment.classList.add('is-parenthesis-scope');
+          }
+        });
+      });
+      node.addEventListener('mouseleave', () => clearParenthesisHighlight(block));
+    });
   }
 
   function buildZoneForest(zones) {
@@ -1418,11 +1480,16 @@
       if (start >= end) return;
       const text = token.text.slice(start - token.start, end - token.start);
       const isWholeToken = start === token.start && end === tokenEnd;
+      let node;
       if (token.kind === 'variable' && isWholeToken) {
-        container.appendChild(formulaVariableToken(token, text));
+        node = formulaVariableToken(token, text);
       } else {
-        container.appendChild(element('span', `fb-token fb-token-${token.kind}`, text));
+        node = element('span', `fb-token fb-token-${token.kind}`, text);
       }
+      node.classList.add('fb-formula-segment');
+      node.dataset.formulaStart = String(start);
+      node.dataset.formulaEnd = String(end);
+      container.appendChild(node);
     });
   }
 
@@ -1791,7 +1858,10 @@
       .fb-editor > label { display: block; margin-bottom: 5px; color: #475569; font-size: 12px; font-weight: 650; }
       .fb-editor-row { display: flex; align-items: stretch; gap: 8px; }
       .fb-editor-row .fb-button { align-self: stretch; }
-      .fb-shortcuts { margin-top: 4px; color: #8492a6; font-size: 11px; }
+      .fb-editor-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; margin-top: 4px; }
+      .fb-shortcuts { color: #8492a6; font-size: 11px; }
+      .fb-parenthesis-control { display: inline-flex; align-items: center; gap: 5px; color: #718096; font-size: 10px; white-space: nowrap; cursor: pointer; }
+      .fb-parenthesis-control input { margin: 0; accent-color: #6483a4; }
       .fb-workspace { min-height: 0; display: grid; grid-template-columns: 250px minmax(0, 1fr); }
       .fb-browser-sidebar {
         min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr);
@@ -1859,6 +1929,15 @@
       .fb-token-punctuation { color: #778397; }
       .fb-token-identifier { color: #704c16; }
       .fb-token-unhighlighted { color: #64748b; }
+      .fb-parenthesis {
+        border-radius: 2px; cursor: default;
+        transition: color .12s ease, background-color .12s ease, box-shadow .12s ease;
+      }
+      .fb-formula-segment.is-parenthesis-scope { background-color: rgba(78,105,135,.045); }
+      .fb-parenthesis.is-parenthesis-pair {
+        background-color: rgba(69,103,141,.11); color: #496d94;
+        box-shadow: inset 0 -1px 0 rgba(69,103,141,.24);
+      }
       .fb-formula-variable {
         display: inline; margin: 0; padding: 0 1px; border: 0; border-radius: 3px;
         background: transparent; color: #526579; font: inherit; font-weight: 600; line-height: inherit; cursor: pointer;

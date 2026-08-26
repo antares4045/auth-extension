@@ -37,7 +37,8 @@ const encodeFormBody = (fields) => Object.entries(fields)
     .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
     .join('&');
 const DEFAULT_BRIDGE_TIMEOUT_MS = 30000;
-const REPORT_SETTING_TIMEOUT_MS = 5000;
+const DEFAULT_REPORT_OPERATION_BUDGET_MS = 10000;
+const MIN_REPORT_SET_BUDGET_MS = 1000;
 
 const requestToBridge = async (
     command,
@@ -254,7 +255,7 @@ function updateApiUrl({endpoint = '/api', host = '' }={})
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'getSetting') {
         // Асинхронно получаем значение настройки
-        getCurrentSetting(message.params).then(value => {
+        getCurrentSetting(message.params, message.deadline).then(value => {
             sendResponse({ success: true, value: "ФД " + value });
         }).catch(error => {
             console.error("Ошибка получения настройки:", error);
@@ -263,7 +264,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true; // Сообщаем, что ответ будет отправлен асинхронно
     }
     if (message.action === 'toggleSetting') {
-        toggleSetting(message.params).then(newValue => {
+        toggleSetting(message.params, message.deadline).then(newValue => {
             sendResponse({ success: true, newValue: "ФД " + newValue });
         }).catch(error => {
             console.error("Ошибка переключения настройки:", error);
@@ -273,14 +274,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 });
 
+function resolveReportDeadline(value) {
+    return Number.isFinite(value)
+        ? value
+        : Date.now() + DEFAULT_REPORT_OPERATION_BUDGET_MS;
+}
+
+function remainingReportTime(deadline, minimum = 1) {
+    const remaining = Math.floor(deadline - Date.now());
+    if (remaining < minimum) throw new Error('Истекло время операции с настройкой отчёта');
+    return remaining;
+}
+
 // Функция для получения текущего значения настройки
-async function getCurrentSetting(params = null) {
+async function getCurrentSetting(params = null, deadlineValue) {
+    const deadline = resolveReportDeadline(deadlineValue);
     // Используем существующую requestToBridge
     const response = await requestToBridge(
         'REP.GET_REPORT_SETTINGS',
         params,
         true,
-        { timeoutMs: REPORT_SETTING_TIMEOUT_MS },
+        { timeoutMs: remainingReportTime(deadline) },
     );
     if (!response.ok) throw new Error('Failed to get setting');
     const data = await response.json();
@@ -290,16 +304,18 @@ async function getCurrentSetting(params = null) {
 }
 
 // Функция для переключения настройки
-async function toggleSetting(params = null) {
+async function toggleSetting(params = null, deadlineValue) {
+    const deadline = resolveReportDeadline(deadlineValue);
     // Сначала получаем текущее значение
-    const currentValue = await getCurrentSetting(params);
+    const currentValue = await getCurrentSetting(params, deadline);
     const newValue = currentValue == "4" ? "3" : "4";
+    const remaining = remainingReportTime(deadline, MIN_REPORT_SET_BUDGET_MS);
     // Отправляем запрос на установку нового значения
     const updateResponse = await requestToBridge(
         'REP.SET_REPORT_SETTINGS',
         { "settings": {"engineVersion": newValue} },
         true,
-        { timeoutMs: REPORT_SETTING_TIMEOUT_MS },
+        { timeoutMs: remaining },
     );
     if (!updateResponse.ok) throw new Error('Failed to toggle setting');
     return newValue;

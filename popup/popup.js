@@ -74,6 +74,7 @@ function addNewInstance() {
 // --- Логика для вкладок (tab) ---
 let currentTab = 'instances';
 const POPUP_MESSAGE_TIMEOUT_MS = 12000;
+const REPORT_OPERATION_BUDGET_MS = 10000;
 
 function withTimeout(promise, timeoutMs = POPUP_MESSAGE_TIMEOUT_MS) {
     let timer;
@@ -86,6 +87,10 @@ function withTimeout(promise, timeoutMs = POPUP_MESSAGE_TIMEOUT_MS) {
             );
         }),
     ]).finally(() => clearTimeout(timer));
+}
+
+function createReportOperationDeadline() {
+    return Date.now() + REPORT_OPERATION_BUDGET_MS;
 }
 
 function showTab(tabId) {
@@ -134,6 +139,7 @@ async function loadCurrentState(tabId) {
         // Отправляем запрос в контентный скрипт
         const response = await withTimeout(chrome.tabs.sendMessage(tabId, {
             action: 'getSetting',
+            deadline: createReportOperationDeadline(),
             // Здесь нужные параметры для запроса, читаемые из sessionStorage
             // params: { /* param1: 'value1', param2: 'value2' */ }
         }));
@@ -164,6 +170,7 @@ async function onToggleState() {
     try {
         const response = await withTimeout(chrome.tabs.sendMessage(tab.id, {
             action: 'toggleSetting',
+            deadline: createReportOperationDeadline(),
             // params: { /* param1: 'value1', param2: 'value2' */ }
         }));
         if (response && response.success) {

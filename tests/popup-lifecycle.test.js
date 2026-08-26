@@ -116,3 +116,24 @@ test('popup показывает назначенный хоткей и откр
   assert.equal(createdTabs.length, 1);
   assert.equal(createdTabs[0].url, 'chrome://extensions/shortcuts');
 });
+
+test('операции с настройкой отчёта получают дедлайн раньше popup-таймаута', async () => {
+  const messages = [];
+  const { context } = loadPopup(async (_tabId, message) => {
+    messages.push(message);
+    return message.action === 'getSetting'
+      ? { success: true, value: 'ФД 4' }
+      : { success: true, newValue: 'ФД 3' };
+  });
+  const before = Date.now();
+
+  await context.loadCurrentState(7);
+  await context.onToggleState();
+
+  assert.deepEqual(messages.map(({ action }) => action), ['getSetting', 'toggleSetting']);
+  for (const message of messages) {
+    assert.equal(Number.isFinite(message.deadline), true);
+    assert.ok(message.deadline >= before + 9000);
+    assert.ok(message.deadline <= Date.now() + 10000);
+  }
+});

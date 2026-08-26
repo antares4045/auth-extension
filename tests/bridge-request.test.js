@@ -104,3 +104,44 @@ test('API-мост отменяет зависший запрос по тайм�
   assert.equal(result.settled, true, 'таймаут не охватил чтение тела ответа');
   assert.match(String(result.error), /превышено время ожидания/);
 });
+
+test('просроченное переключение движка не отправляет запрос к отчёту', async () => {
+  let messageListener;
+  let fetchCalls = 0;
+  global.localStorage = {
+    getItem: (key) => key === 'token' ? '<TEST_TOKEN>' : null,
+    setItem: () => {},
+  };
+  global.sessionStorage = {
+    getItem: (key) => key === 'receiver' || key === 'streamreceiver' ? key : null,
+  };
+  global.window = { location: { origin: 'https://example.test' } };
+  global.document = { addEventListener: () => {} };
+  global.chrome = {
+    storage: { sync: { get: async () => ({ instances: {} }) } },
+    runtime: {
+      onMessage: { addListener(listener) { messageListener = listener; } },
+      sendMessage: () => {},
+    },
+  };
+  global.fetch = async () => {
+    fetchCalls += 1;
+    throw new Error('fetch не должен вызываться после дедлайна');
+  };
+
+  delete require.cache[require.resolve('../content/content.js')];
+  require('../content/content.js');
+
+  const response = await new Promise((resolve) => {
+    const asynchronous = messageListener(
+      { action: 'toggleSetting', deadline: Date.now() - 1 },
+      {},
+      resolve,
+    );
+    assert.equal(asynchronous, true);
+  });
+
+  assert.equal(response.success, false);
+  assert.match(response.error, /Истекло время операции/);
+  assert.equal(fetchCalls, 0);
+});

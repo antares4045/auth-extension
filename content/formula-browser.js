@@ -146,7 +146,7 @@
           <div class="fb-editor-meta">
             <div class="fb-shortcuts">Ctrl+Enter — анализ · Alt+←/→ — история · двойной клик по переменной — перейти · Esc — скрыть</div>
             <label class="fb-parenthesis-control">
-              <input id="fb-parenthesis-highlight" type="checkbox" checked />
+              <input id="fb-parenthesis-highlight" type="checkbox" checked disabled />
               <span>Подсвечивать скобки</span>
             </label>
           </div>
@@ -586,8 +586,9 @@
           state.expansionDepth = { kind: 'unlimited' };
           state.parenthesisHighlight = true;
         } finally {
-          state.shadow.getElementById('fb-parenthesis-highlight').checked =
-            state.parenthesisHighlight;
+          const parenthesisInput = state.shadow.getElementById('fb-parenthesis-highlight');
+          parenthesisInput.checked = state.parenthesisHighlight;
+          parenthesisInput.disabled = false;
           state.preferencesLoaded = true;
         }
       })();
@@ -869,7 +870,7 @@
     error.append(
       element('h2', '', 'Формула не прошла проверку'),
       element('p', '', message),
-      codeBlock(formula),
+      richFormulaBlock(formula),
     );
     content.appendChild(error);
   }
@@ -882,7 +883,7 @@
       element('h2', '', 'Не удалось проверить формулу'),
       element('p', '', message),
       element('p', 'fb-muted', 'Формула не помечена как ошибочная: сервер не вернул результат проверки.'),
-      codeBlock(formula),
+      richFormulaBlock(formula),
     );
     content.appendChild(error);
   }
@@ -1389,9 +1390,10 @@
   }
 
   function clearParenthesisHighlight(block) {
-    block.querySelectorAll('.is-parenthesis-pair, .is-parenthesis-scope').forEach((node) => {
-      node.classList.remove('is-parenthesis-pair', 'is-parenthesis-scope');
+    block.querySelectorAll('.is-parenthesis-pair').forEach((node) => {
+      node.classList.remove('is-parenthesis-pair');
     });
+    block.querySelectorAll('.fb-parenthesis-scope-overlay').forEach((node) => node.remove());
   }
 
   function clearAllParenthesisHighlights() {
@@ -1405,24 +1407,93 @@
       pairByPosition.set(pair.open, pair);
       pairByPosition.set(pair.close, pair);
     });
+    const segments = [...block.querySelectorAll('.fb-formula-segment[data-formula-start]')]
+      .map((node) => ({
+        node,
+        start: Number(node.dataset.formulaStart),
+        end: Number(node.dataset.formulaEnd),
+      }))
+      .sort((left, right) => left.start - right.start);
+    const parentheses = new Map();
     block.querySelectorAll('.fb-token-punctuation[data-formula-start]').forEach((node) => {
       const pair = pairByPosition.get(Number(node.dataset.formulaStart));
       if (!pair) return;
       node.classList.add('fb-parenthesis');
-      node.addEventListener('mouseenter', () => {
-        clearParenthesisHighlight(block);
-        if (!state.parenthesisHighlight) return;
-        block.querySelectorAll('.fb-formula-segment[data-formula-start]').forEach((segment) => {
-          const start = Number(segment.dataset.formulaStart);
-          const end = Number(segment.dataset.formulaEnd);
-          if (start === pair.open || start === pair.close) {
-            segment.classList.add('is-parenthesis-pair');
-          } else if (start > pair.open && end <= pair.close) {
-            segment.classList.add('is-parenthesis-scope');
-          }
-        });
+      if (!parentheses.has(pair.open)) parentheses.set(pair.open, []);
+      parentheses.get(pair.open).push(node);
+    });
+
+    const firstSegmentAfter = (position) => {
+      let low = 0;
+      let high = segments.length;
+      while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        if (segments[middle].start <= position) low = middle + 1;
+        else high = middle;
+      }
+      return low;
+    };
+    const showPair = (pair) => {
+      clearParenthesisHighlight(block);
+      if (!state.parenthesisHighlight) return;
+      parentheses.get(pair.open)?.forEach((node) => node.classList.add('is-parenthesis-pair'));
+      const rects = [];
+      for (let index = firstSegmentAfter(pair.open); index < segments.length; index += 1) {
+        const segment = segments[index];
+        if (segment.start >= pair.close) break;
+        if (segment.end > pair.close) continue;
+        rects.push(...segment.node.getClientRects());
+      }
+      appendParenthesisScopeOverlays(block, rects);
+    };
+    block.addEventListener('mouseover', (event) => {
+      const parenthesis = event.target.closest?.('.fb-parenthesis');
+      if (!parenthesis || !block.contains(parenthesis)) return;
+      const pair = pairByPosition.get(Number(parenthesis.dataset.formulaStart));
+      if (pair) showPair(pair);
+    });
+    block.addEventListener('mouseout', (event) => {
+      const parenthesis = event.target.closest?.('.fb-parenthesis');
+      if (!parenthesis || !block.contains(parenthesis)) return;
+      if (parenthesis.contains(event.relatedTarget)) return;
+      clearParenthesisHighlight(block);
+    });
+  }
+
+  function appendParenthesisScopeOverlays(block, clientRects) {
+    const blockRect = block.getBoundingClientRect();
+    const rects = [...clientRects]
+      .filter((rect) => rect.width > 0 && rect.height > 0)
+      .sort((left, right) => left.top - right.top || left.left - right.left);
+    const merged = [];
+    rects.forEach((rect) => {
+      const previous = merged[merged.length - 1];
+      const sameLine = previous &&
+        Math.abs(previous.top - rect.top) < 2 &&
+        Math.abs(previous.bottom - rect.bottom) < 2;
+      if (sameLine && rect.left <= previous.right + 2) {
+        previous.right = Math.max(previous.right, rect.right);
+        previous.width = previous.right - previous.left;
+        return;
+      }
+      merged.push({
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
       });
-      node.addEventListener('mouseleave', () => clearParenthesisHighlight(block));
+    });
+    merged.forEach((rect) => {
+      const overlay = element('span', 'fb-parenthesis-scope-overlay');
+      Object.assign(overlay.style, {
+        left: `${rect.left - blockRect.left - block.clientLeft + block.scrollLeft}px`,
+        top: `${rect.top - blockRect.top - block.clientTop + block.scrollTop}px`,
+        width: `${rect.width}px`,
+        height: `${rect.height}px`,
+      });
+      block.appendChild(overlay);
     });
   }
 
@@ -1933,7 +2004,11 @@
         border-radius: 2px; cursor: default;
         transition: color .12s ease, background-color .12s ease, box-shadow .12s ease;
       }
-      .fb-formula-segment.is-parenthesis-scope { background-color: rgba(78,105,135,.045); }
+      .fb-code-rich > :not(.fb-parenthesis-scope-overlay) { position: relative; z-index: 1; }
+      .fb-parenthesis-scope-overlay {
+        position: absolute; z-index: 0; border-radius: 2px;
+        background: rgba(78,105,135,.045); pointer-events: none;
+      }
       .fb-parenthesis.is-parenthesis-pair {
         background-color: rgba(69,103,141,.11); color: #496d94;
         box-shadow: inset 0 -1px 0 rgba(69,103,141,.24);

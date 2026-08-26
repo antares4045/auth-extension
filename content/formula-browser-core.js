@@ -8,6 +8,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const MAX_SAFE_RECURSIVE_DEPTH = 256;
+
   function collectReferences(node, result = []) {
     const stack = node && typeof node === 'object' ? [node] : [];
     const visited = new WeakSet();
@@ -51,11 +53,13 @@
       .toLocaleLowerCase('ru');
   }
 
-  function normalizeExpansionDepth(value) {
-    if (value === null || value === undefined || String(value).trim() === '') return null;
+  function parseExpansionDepth(value) {
+    if (value === null || value === undefined || String(value).trim() === '') {
+      return { kind: 'unlimited' };
+    }
     const depth = Number(value);
-    if (!Number.isFinite(depth) || depth < 1) return null;
-    return Math.floor(depth);
+    if (!Number.isFinite(depth) || depth < 1) return { kind: 'invalid' };
+    return { kind: 'limited', value: Math.floor(depth) };
   }
 
   function summarizeSourceNames(sources, options = {}) {
@@ -285,13 +289,14 @@
       return {
         warnings,
         maxDepth: options.maxDepth ?? 40,
+        maxSafeDepth: MAX_SAFE_RECURSIVE_DEPTH,
         budget: createExpansionBudget(options),
         zones,
       };
     }
 
     function expandReferences(formula, node, path, context, depth = 0) {
-      const { warnings, maxDepth, budget, zones } = context;
+      const { warnings, maxDepth, maxSafeDepth, budget, zones } = context;
       const references = collectReferences(node);
       const positionedReferences = [];
       let fallbackCursor = 0;
@@ -386,8 +391,12 @@
             const warning = `Циклическая ссылка: ${cycleNames.join(' → ')}`;
             addWarning(warnings, warning);
             nested = `[${dependency.name || dependency.id}]`;
-          } else if (path.length >= maxDepth) {
+          } else if (depth >= maxDepth) {
             const warning = `Достигнут предел раскрытия (${maxDepth}): ${dependency.name || dependency.id}`;
+            addWarning(warnings, warning);
+            nested = `[${dependency.name || dependency.id}]`;
+          } else if (depth >= maxSafeDepth) {
+            const warning = `Достигнут технический предел безопасного раскрытия (${maxSafeDepth}): ${dependency.name || dependency.id}`;
             addWarning(warnings, warning);
             nested = `[${dependency.name || dependency.id}]`;
           } else if (budget.remainingNodes <= 0) {
@@ -756,7 +765,7 @@
   return {
     collectReferences,
     createModel,
-    normalizeExpansionDepth,
+    parseExpansionDepth,
     normalizeVariableQuery,
     summarizeSourceNames,
   };

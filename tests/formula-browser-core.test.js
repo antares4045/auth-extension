@@ -4,15 +4,15 @@ const { performance } = require('node:perf_hooks');
 
 const FormulaBrowserCore = require('../content/formula-browser-core.js');
 
-test('нормализует сохранённый лимит вложенности, оставляя пустое значение бесконечным', () => {
-  assert.equal(FormulaBrowserCore.normalizeExpansionDepth(undefined), null);
-  assert.equal(FormulaBrowserCore.normalizeExpansionDepth(null), null);
-  assert.equal(FormulaBrowserCore.normalizeExpansionDepth(''), null);
-  assert.equal(FormulaBrowserCore.normalizeExpansionDepth(0), null);
-  assert.equal(FormulaBrowserCore.normalizeExpansionDepth(-2), null);
-  assert.equal(FormulaBrowserCore.normalizeExpansionDepth('не число'), null);
-  assert.equal(FormulaBrowserCore.normalizeExpansionDepth('3'), 3);
-  assert.equal(FormulaBrowserCore.normalizeExpansionDepth(2.8), 2);
+test('различает неограниченный, ограниченный и повреждённый предел вложенности', () => {
+  assert.deepEqual(FormulaBrowserCore.parseExpansionDepth(undefined), { kind: 'unlimited' });
+  assert.deepEqual(FormulaBrowserCore.parseExpansionDepth(null), { kind: 'unlimited' });
+  assert.deepEqual(FormulaBrowserCore.parseExpansionDepth(''), { kind: 'unlimited' });
+  assert.deepEqual(FormulaBrowserCore.parseExpansionDepth(0), { kind: 'invalid' });
+  assert.deepEqual(FormulaBrowserCore.parseExpansionDepth(-2), { kind: 'invalid' });
+  assert.deepEqual(FormulaBrowserCore.parseExpansionDepth('не число'), { kind: 'invalid' });
+  assert.deepEqual(FormulaBrowserCore.parseExpansionDepth('3'), { kind: 'limited', value: 3 });
+  assert.deepEqual(FormulaBrowserCore.parseExpansionDepth(2.8), { kind: 'limited', value: 2 });
 });
 
 test('ограничивает подпись длинного списка DP-источников до объединения строки', () => {
@@ -184,7 +184,7 @@ test('раскрывает ссылки из проверенной произв
   });
 });
 
-test('ограничивает глубину раскрытия длинной цепочки', () => {
+test('считает пользовательский предел по раскрытым уровням без скрытого смещения', () => {
   const variables = [
     {
       id: 'v0', name: 'V0', formula: '=[V1]',
@@ -203,14 +203,14 @@ test('ограничивает глубину раскрытия длинной 
 
   const model = FormulaBrowserCore.createModel(variables, []);
 
-  assert.deepEqual(model.expandFormula('v0', { maxDepth: 2 }), {
+  assert.deepEqual(model.expandFormula('v0', { maxDepth: 1 }), {
     formula: '=(([V2]))',
-    warnings: ['Достигнут предел раскрытия (2): V2'],
+    warnings: ['Достигнут предел раскрытия (1): V2'],
   });
 });
 
-test('раскрывает цепочку глубже штатного предела при явной бесконечной глубине', () => {
-  const variables = Array.from({ length: 45 }, (_, index) => ({
+test('останавливает неограниченную цепочку на техническом пределе до переполнения стека', () => {
+  const variables = Array.from({ length: 2000 }, (_, index) => ({
     id: `v${index}`,
     name: `V${index}`,
     formula: `=[V${index + 1}]`,
@@ -219,14 +219,14 @@ test('раскрывает цепочку глубже штатного пред
     },
   }));
   variables.push({
-    id: 'v45', name: 'V45', varType: 'DP', formula: '=[V45]',
+    id: 'v2000', name: 'V2000', varType: 'DP', formula: '=[V2000]',
   });
 
   const expansion = FormulaBrowserCore.createModel(variables, [])
     .expandFormula('v0', { maxDepth: Infinity });
 
-  assert.match(expansion.formula, /\[V45\]/);
-  assert.doesNotMatch(expansion.warnings.join('\n'), /предел раскрытия \(/);
+  assert.match(expansion.formula, /\[V\d+\]/);
+  assert.match(expansion.warnings.join('\n'), /технический предел безопасного раскрытия/);
 });
 
 test('не подставляет имя переменной внутри строковой константы', () => {

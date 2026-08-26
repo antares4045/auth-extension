@@ -52,7 +52,7 @@
     variableGrouping: 'request',
     zoneMode: 'none',
     expansionOpen: false,
-    expansionDepth: null,
+    expansionDepth: { kind: 'unlimited' },
     preferencesLoaded: false,
     preferencesPromise: null,
     popover: null,
@@ -540,14 +540,13 @@
             ? stored[ZONE_MODE_STORAGE_KEY]
             : 'none';
           state.expansionOpen = stored?.[EXPANSION_OPEN_STORAGE_KEY] === true;
-          state.expansionDepth = core.normalizeExpansionDepth(
-            stored?.[EXPANSION_DEPTH_STORAGE_KEY],
-          );
+          const depth = core.parseExpansionDepth(stored?.[EXPANSION_DEPTH_STORAGE_KEY]);
+          state.expansionDepth = depth.kind === 'invalid' ? { kind: 'unlimited' } : depth;
         } catch {
           setVariableGrouping('request', false);
           state.zoneMode = 'none';
           state.expansionOpen = false;
-          state.expansionDepth = null;
+          state.expansionDepth = { kind: 'unlimited' };
         } finally {
           state.preferencesLoaded = true;
         }
@@ -912,9 +911,9 @@
         };
         const refreshExpansion = () => {
           expansion = getExpansion({
-            maxDepth: state.expansionDepth === null
-              ? Infinity
-              : state.expansionDepth + 1,
+            maxDepth: state.expansionDepth.kind === 'limited'
+              ? state.expansionDepth.value
+              : Infinity,
           });
           renderExpansion();
           warningsHost.replaceChildren(...expansion.warnings.map(
@@ -947,15 +946,25 @@
         depthInput.step = '1';
         depthInput.inputMode = 'numeric';
         depthInput.placeholder = '∞';
-        depthInput.value = state.expansionDepth ?? '';
+        depthInput.value = state.expansionDepth.kind === 'limited'
+          ? state.expansionDepth.value
+          : '';
         depthInput.setAttribute('aria-label', 'Количество раскрываемых уровней вложенности');
-        depthInput.title = 'Пусто — раскрывать без ограничения глубины';
+        depthInput.title = 'Пусто — без пользовательского ограничения глубины';
         depthInput.addEventListener('change', () => {
-          state.expansionDepth = core.normalizeExpansionDepth(depthInput.value);
-          depthInput.value = state.expansionDepth ?? '';
+          const depth = core.parseExpansionDepth(depthInput.value);
+          if (depth.kind === 'invalid') {
+            depthInput.value = state.expansionDepth.kind === 'limited'
+              ? state.expansionDepth.value
+              : '';
+            setStatus('Глубина должна быть целым числом от 1 или оставаться пустой', 'warning');
+            return;
+          }
+          state.expansionDepth = depth;
+          depthInput.value = depth.kind === 'limited' ? depth.value : '';
           persistUiPreference(
             EXPANSION_DEPTH_STORAGE_KEY,
-            state.expansionDepth,
+            depth.kind === 'limited' ? depth.value : null,
             'Не удалось сохранить глубину полной развёртки',
           );
           refreshExpansion();

@@ -471,12 +471,12 @@
   function renderVariableList() {
     if (!state.shadow) return;
     const target = state.shadow.getElementById('fb-variable-list');
-    const filter = normalizeVariableQuery(state.shadow.getElementById('fb-list-filter').value);
+    const filter = core.normalizeVariableQuery(state.shadow.getElementById('fb-list-filter').value);
     target.replaceChildren();
     const matches = state.variables
       .filter((variable) => {
         if (!filter) return true;
-        return `${variableLabel(variable)} ${variable.id} ${variable.type || ''} ${variable.varType || ''}`
+        return `${variableLabel(variable)} ${variable.formula || ''} ${variable.id} ${variable.type || ''} ${variable.varType || ''}`
           .toLocaleLowerCase('ru')
           .includes(filter);
       })
@@ -511,8 +511,12 @@
     button.dataset.variableId = variable.id;
     button.append(
       typeDot(variable.type),
-      element('span', 'fb-sidebar-item-main', variableLabel(variable)),
-      element('span', 'fb-sidebar-item-meta', variable.varType || 'Unknown'),
+      element('span', 'fb-sidebar-item-main', variableListLabel(variable)),
+      element(
+        'span',
+        'fb-sidebar-item-meta',
+        variable.varType === 'Formula' ? String(variable.id).slice(0, 8) : variable.varType || 'Unknown',
+      ),
     );
     button.title = `${variable.id} · ${variable.type || 'неизвестный type'} · ${variable.varType || 'неизвестный varType'}`;
     button.addEventListener('click', () => navigate({ kind: 'variable', id: variable.id }));
@@ -882,8 +886,13 @@
       : String(variable?.id ?? 'Без имени/ID');
   }
 
-  function normalizeVariableQuery(value) {
-    return core.normalizeVariableQuery(value);
+  function variableListLabel(variable) {
+    if (typeof variable?.name === 'string' && variable.name.length) return variable.name;
+    if (variable?.varType === 'Formula' && typeof variable.formula === 'string' && variable.formula.length) {
+      const singleLine = variable.formula.replace(/\s+/g, ' ').trim();
+      return singleLine.length > 90 ? `${singleLine.slice(0, 90)}…` : singleLine;
+    }
+    return variableLabel(variable);
   }
 
   function formulaCard(title, formula, root = null) {
@@ -910,16 +919,22 @@
   function richFormulaBlock(value, root = null, zones = []) {
     const formula = value == null ? '—' : String(value);
     const block = element('pre', 'fb-code fb-code-rich');
-    const tokens = state.model
-      ? state.model.tokenizeFormula(formula, root)
-      : [{ kind: 'text', text: formula, start: 0, length: formula.length }];
+    const syntaxSource = formula.slice(0, 50000);
+    const allTokens = state.model
+      ? state.model.tokenizeFormula(syntaxSource, root)
+      : [{ kind: 'text', text: syntaxSource, start: 0, length: syntaxSource.length }];
+    const tokens = allTokens.slice(0, 5000);
+    const highlightedEnd = tokens.length
+      ? tokens[tokens.length - 1].start + tokens[tokens.length - 1].length
+      : 0;
     const validZones = (Array.isArray(zones) ? zones : [])
       .filter((zone) => (
         zone && Number.isInteger(zone.start) && Number.isInteger(zone.length) &&
-        zone.start >= 0 && zone.length > 0 && zone.start + zone.length <= formula.length
+        zone.start >= 0 && zone.length > 0 && zone.start + zone.length <= highlightedEnd
       ))
       .sort((a, b) => a.start - b.start)
-      .filter((zone, index, all) => index === 0 || zone.start >= all[index - 1].start + all[index - 1].length);
+      .filter((zone, index, all) => index === 0 || zone.start >= all[index - 1].start + all[index - 1].length)
+      .slice(0, 100);
     let cursor = 0;
 
     validZones.forEach((zone, index) => {
@@ -935,7 +950,12 @@
       block.appendChild(wrapper);
       cursor = zone.start + zone.length;
     });
-    appendFormulaTokens(block, tokens, cursor, formula.length);
+    appendFormulaTokens(block, tokens, cursor, highlightedEnd);
+    if (highlightedEnd < formula.length) {
+      const tail = element('span', 'fb-token-unhighlighted', formula.slice(highlightedEnd));
+      tail.title = 'Для производительности подсветка ограничена первыми 5000 токенами / 50000 символами';
+      block.appendChild(tail);
+    }
     return block;
   }
 
@@ -1012,12 +1032,21 @@
       });
       popover.appendChild(button);
     });
-    state.shadow.appendChild(popover);
+    state.panel.appendChild(popover);
     state.popover = popover;
     const anchorRect = anchor.getBoundingClientRect();
     const popoverRect = popover.getBoundingClientRect();
-    popover.style.left = `${clamp(anchorRect.left, 8, window.innerWidth - popoverRect.width - 8)}px`;
-    popover.style.top = `${clamp(anchorRect.bottom + 6, 8, window.innerHeight - popoverRect.height - 8)}px`;
+    const panelRect = state.panel.getBoundingClientRect();
+    const left = clamp(
+      anchorRect.left - panelRect.left,
+      8,
+      Math.max(8, panelRect.width - popoverRect.width - 8),
+    );
+    const below = anchorRect.bottom - panelRect.top + 6;
+    const above = anchorRect.top - panelRect.top - popoverRect.height - 6;
+    const top = below + popoverRect.height <= panelRect.height - 8 ? below : above;
+    popover.style.left = `${left}px`;
+    popover.style.top = `${clamp(top, 8, Math.max(8, panelRect.height - popoverRect.height - 8))}px`;
   }
 
   function dismissVariablePopover() {
@@ -1215,6 +1244,7 @@
       .fb-token-operator { color: #475569; font-weight: 700; }
       .fb-token-punctuation { color: #778397; }
       .fb-token-identifier { color: #704c16; }
+      .fb-token-unhighlighted { color: #64748b; }
       .fb-formula-variable {
         display: inline; margin: 0; padding: 1px 4px; border: 1px solid transparent; border-radius: 5px;
         color: #fff; font: inherit; font-weight: 650; line-height: inherit; cursor: pointer; box-decoration-break: clone;
@@ -1285,7 +1315,7 @@
       .fb-status[data-tone="warning"] { color: #855d00; background: #fffbeb; }
       .fb-status[data-tone="error"] { color: #a12634; background: #fff5f5; }
       .fb-variable-popover {
-        position: fixed; z-index: 2147483647; width: min(360px, calc(100vw - 16px)); max-height: 360px;
+        position: absolute; z-index: 2147483647; width: min(360px, calc(100% - 16px)); max-height: 360px;
         overflow: auto; padding: 10px; border: 1px solid #b9c9dc; border-radius: 10px; background: #fff;
         color: #172033; box-shadow: 0 14px 40px rgba(15,23,42,.28); font-family: Inter, Roboto, sans-serif;
       }

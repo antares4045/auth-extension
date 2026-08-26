@@ -39,11 +39,10 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content -Raw manifest.json | ConvertFrom-Json).version
-          ./tools/pack-extension.ps1 `
+          $artifactPath = ./tools/pack-extension.ps1 `
             -KeyPath '${{ steps.signing-key.outputs.path }}' `
             -OutputDirectory './dist'
 
-          $artifactPath = "dist/universal-auth-injector-$version.crx"
           if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
             throw "Expected release artifact was not created: $artifactPath"
           }

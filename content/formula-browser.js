@@ -5,6 +5,7 @@
   const GROUPING_STORAGE_KEY = 'formulaBrowserVariableGrouping';
   const ZONE_MODE_STORAGE_KEY = 'formulaBrowserZoneMode';
   const EXPANSION_OPEN_STORAGE_KEY = 'formulaBrowserExpansionOpen';
+  const EXPANSION_DEPTH_STORAGE_KEY = 'formulaBrowserExpansionDepth';
   const POPOVER_CANDIDATE_LIMIT = 100;
   const POPOVER_CANDIDATE_BATCH = 10;
   const POPOVER_SOURCE_LIMIT = 5;
@@ -51,6 +52,7 @@
     variableGrouping: 'request',
     zoneMode: 'none',
     expansionOpen: false,
+    expansionDepth: null,
     preferencesLoaded: false,
     preferencesPromise: null,
     popover: null,
@@ -198,9 +200,7 @@
     $('fb-group-request').addEventListener('click', () => setVariableGrouping('request'));
     $('fb-group-alphabet').addEventListener('click', () => setVariableGrouping('alphabet'));
     state.panel.addEventListener('pointerdown', (event) => {
-      if (!state.popover || event.target.closest(
-        '.fb-variable-popover, .fb-formula-variable, .fb-origin-label',
-      )) return;
+      if (!state.popover || event.target.closest('.fb-variable-popover')) return;
       dismissVariablePopover();
     });
 
@@ -532,6 +532,7 @@
             GROUPING_STORAGE_KEY,
             ZONE_MODE_STORAGE_KEY,
             EXPANSION_OPEN_STORAGE_KEY,
+            EXPANSION_DEPTH_STORAGE_KEY,
           ]);
           const grouping = stored?.[GROUPING_STORAGE_KEY];
           setVariableGrouping(grouping === 'alphabet' ? 'alphabet' : 'request', false);
@@ -539,10 +540,14 @@
             ? stored[ZONE_MODE_STORAGE_KEY]
             : 'none';
           state.expansionOpen = stored?.[EXPANSION_OPEN_STORAGE_KEY] === true;
+          state.expansionDepth = core.normalizeExpansionDepth(
+            stored?.[EXPANSION_DEPTH_STORAGE_KEY],
+          );
         } catch {
           setVariableGrouping('request', false);
           state.zoneMode = 'none';
           state.expansionOpen = false;
+          state.expansionDepth = null;
         } finally {
           state.preferencesLoaded = true;
         }
@@ -773,7 +778,7 @@
     const dependencies = state.model.getDependencies(variable.id);
     main.appendChild(dependenciesCard(dependencies));
     main.appendChild(expandedFormulaCard(
-      () => state.model.expandFormulaDetailed(variable.id),
+      (options) => state.model.expandFormulaDetailed(variable.id, options),
     ));
 
     aside.appendChild(sourceCard(variable));
@@ -807,7 +812,11 @@
     const dependencies = referencesToVariables(root);
     main.appendChild(dependenciesCard(dependencies));
     main.appendChild(expandedFormulaCard(
-      () => state.model.expandExpressionDetailed(entry.source || entry.formula, root),
+      (options) => state.model.expandExpressionDetailed(
+        entry.source || entry.formula,
+        root,
+        options,
+      ),
     ));
     aside.appendChild(treeCard(root, []));
     layout.append(main, aside);
@@ -877,12 +886,13 @@
       if (rendered) return;
       rendered = true;
       try {
-        const expansion = getExpansion();
+        let expansion;
         const controls = element('div', 'fb-expansion-controls');
         const zoneModes = element('div', 'fb-zone-modes');
         zoneModes.setAttribute('role', 'group');
         zoneModes.setAttribute('aria-label', 'Режим зонирования формулы');
         const formulaHost = element('div');
+        const warningsHost = element('div');
         const renderExpansion = () => {
           const zones = state.zoneMode === 'all'
             ? expansion.allZones || expansion.zones
@@ -899,6 +909,17 @@
             button.classList.toggle('is-active', active);
             button.setAttribute('aria-pressed', String(active));
           });
+        };
+        const refreshExpansion = () => {
+          expansion = getExpansion({
+            maxDepth: state.expansionDepth === null
+              ? Infinity
+              : state.expansionDepth + 1,
+          });
+          renderExpansion();
+          warningsHost.replaceChildren(...expansion.warnings.map(
+            (warning) => element('div', 'fb-warning', warning),
+          ));
         };
         [
           ['none', 'Без зон'],
@@ -919,15 +940,37 @@
           });
           zoneModes.appendChild(button);
         });
+        const depthControl = element('label', 'fb-depth-control');
+        const depthInput = element('input', 'fb-depth-input');
+        depthInput.type = 'number';
+        depthInput.min = '1';
+        depthInput.step = '1';
+        depthInput.inputMode = 'numeric';
+        depthInput.placeholder = '∞';
+        depthInput.value = state.expansionDepth ?? '';
+        depthInput.setAttribute('aria-label', 'Количество раскрываемых уровней вложенности');
+        depthInput.title = 'Пусто — раскрывать без ограничения глубины';
+        depthInput.addEventListener('change', () => {
+          state.expansionDepth = core.normalizeExpansionDepth(depthInput.value);
+          depthInput.value = state.expansionDepth ?? '';
+          persistUiPreference(
+            EXPANSION_DEPTH_STORAGE_KEY,
+            state.expansionDepth,
+            'Не удалось сохранить глубину полной развёртки',
+          );
+          refreshExpansion();
+        });
+        depthControl.append(
+          element('span', '', 'Уровней'),
+          depthInput,
+        );
         controls.append(
           zoneModes,
+          depthControl,
           element('span', 'fb-muted', 'Зоны показывают происхождение фрагментов раскрытой формулы.'),
         );
-        body.append(controls, formulaHost);
-        renderExpansion();
-        expansion.warnings.forEach((warning) =>
-          body.appendChild(element('div', 'fb-warning', warning)),
-        );
+        body.append(controls, formulaHost, warningsHost);
+        refreshExpansion();
       } catch (error) {
         body.appendChild(element('div', 'fb-warning', error.message));
       }
@@ -1360,7 +1403,7 @@
     const candidateIds = Array.isArray(token.candidateIds) ? token.candidateIds : [];
     const canOpen = Boolean(token.variableId) || candidateIds.length > 0;
     const node = element(
-      canOpen ? 'button' : 'span',
+      'span',
       `fb-formula-variable fb-type-${normalizeTypeClass(token.variableType)}${canOpen ? '' : ' is-missing'}`,
       text,
     );
@@ -1368,7 +1411,8 @@
       node.title = 'Переменная отсутствует в REP.GET_VARIABLES';
       return node;
     }
-    node.type = 'button';
+    node.tabIndex = 0;
+    node.setAttribute('role', 'button');
     const ids = token.variableId ? [token.variableId] : candidateIds;
     bindVariablePopover(node, ids, text);
     return node;
@@ -1391,11 +1435,9 @@
         event.type === 'click' && event.detail === 0,
       );
     };
-    anchor.addEventListener('pointerenter', show);
-    anchor.addEventListener('focus', show);
     anchor.addEventListener('click', show);
     anchor.addEventListener('keydown', (event) => {
-      if (event.key !== 'ArrowDown') return;
+      if (!['ArrowDown', 'Enter', ' '].includes(event.key)) return;
       event.preventDefault();
       showVariablePopover(anchor, candidateIds, label, true);
     });
@@ -1819,6 +1861,8 @@
       .fb-zone-mode { padding: 3px 8px; border: 0; border-radius: 5px; background: transparent; color: #637386; font-size: 10px; cursor: pointer; }
       .fb-zone-mode:hover { color: #315f8a; }
       .fb-zone-mode.is-active { background: #fff; color: #315f8a; box-shadow: 0 1px 3px rgba(31,50,72,.14); }
+      .fb-depth-control { display: inline-flex; align-items: center; gap: 5px; color: #637386; font-size: 10px; }
+      .fb-depth-input { width: 54px; padding: 3px 5px; border: 1px solid #d5dee8; border-radius: 5px; background: #fff; color: #315f8a; font: inherit; }
       .fb-dependency-list { display: flex; flex-wrap: wrap; gap: 7px; }
       .fb-dependency {
         display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 4px 9px;

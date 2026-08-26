@@ -4,6 +4,17 @@ const { performance } = require('node:perf_hooks');
 
 const FormulaBrowserCore = require('../content/formula-browser-core.js');
 
+test('нормализует сохранённый лимит вложенности, оставляя пустое значение бесконечным', () => {
+  assert.equal(FormulaBrowserCore.normalizeExpansionDepth(undefined), null);
+  assert.equal(FormulaBrowserCore.normalizeExpansionDepth(null), null);
+  assert.equal(FormulaBrowserCore.normalizeExpansionDepth(''), null);
+  assert.equal(FormulaBrowserCore.normalizeExpansionDepth(0), null);
+  assert.equal(FormulaBrowserCore.normalizeExpansionDepth(-2), null);
+  assert.equal(FormulaBrowserCore.normalizeExpansionDepth('не число'), null);
+  assert.equal(FormulaBrowserCore.normalizeExpansionDepth('3'), 3);
+  assert.equal(FormulaBrowserCore.normalizeExpansionDepth(2.8), 2);
+});
+
 test('ограничивает подпись длинного списка DP-источников до объединения строки', () => {
   const sources = Array.from({ length: 10000 }, (_, index) => ({
     dpName: `Очень длинный источник ${index}`,
@@ -196,6 +207,26 @@ test('ограничивает глубину раскрытия длинной 
     formula: '=(([V2]))',
     warnings: ['Достигнут предел раскрытия (2): V2'],
   });
+});
+
+test('раскрывает цепочку глубже штатного предела при явной бесконечной глубине', () => {
+  const variables = Array.from({ length: 45 }, (_, index) => ({
+    id: `v${index}`,
+    name: `V${index}`,
+    formula: `=[V${index + 1}]`,
+    parsedFormula: {
+      root: { nodeType: 'var', varId: `v${index + 1}`, literal: `V${index + 1}` },
+    },
+  }));
+  variables.push({
+    id: 'v45', name: 'V45', varType: 'DP', formula: '=[V45]',
+  });
+
+  const expansion = FormulaBrowserCore.createModel(variables, [])
+    .expandFormula('v0', { maxDepth: Infinity });
+
+  assert.match(expansion.formula, /\[V45\]/);
+  assert.doesNotMatch(expansion.warnings.join('\n'), /предел раскрытия \(/);
 });
 
 test('не подставляет имя переменной внутри строковой константы', () => {

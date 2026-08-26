@@ -51,6 +51,13 @@
       .toLocaleLowerCase('ru');
   }
 
+  function normalizeExpansionDepth(value) {
+    if (value === null || value === undefined || String(value).trim() === '') return null;
+    const depth = Number(value);
+    if (!Number.isFinite(depth) || depth < 1) return null;
+    return Math.floor(depth);
+  }
+
   function summarizeSourceNames(sources, options = {}) {
     const maxItems = Math.max(1, Number(options.maxItems) || 3);
     const maxLength = Math.max(16, Number(options.maxLength) || 120);
@@ -749,6 +756,7 @@
   return {
     collectReferences,
     createModel,
+    normalizeExpansionDepth,
     normalizeVariableQuery,
     summarizeSourceNames,
   };

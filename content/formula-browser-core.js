@@ -118,11 +118,11 @@
       ) || null;
     }
 
-    function findUnquotedVariable(formula, literal, fromIndex) {
-      const target = `[${literal}]`;
+    function indexUnquotedVariables(formula) {
+      const positionsByLiteral = new Map();
       let inString = false;
 
-      for (let index = fromIndex; index <= formula.length - target.length; index += 1) {
+      for (let index = 0; index < formula.length; index += 1) {
         if (formula[index] === "'") {
           if (inString && formula[index + 1] === "'") {
             index += 1;
@@ -131,10 +131,30 @@
           }
           continue;
         }
-        if (!inString && formula.startsWith(target, index)) return index;
+        if (inString || formula[index] !== '[') continue;
+
+        const end = formula.indexOf(']', index + 1);
+        if (end < 0) break;
+        const literal = formula.slice(index + 1, end);
+        const positions = positionsByLiteral.get(literal) || [];
+        positions.push(index);
+        positionsByLiteral.set(literal, positions);
+        index = end;
       }
 
-      return -1;
+      return positionsByLiteral;
+    }
+
+    function findIndexedVariable(positionsByLiteral, literal, fromIndex) {
+      const positions = positionsByLiteral.get(literal) || [];
+      let low = 0;
+      let high = positions.length;
+      while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        if (positions[middle] < fromIndex) low = middle + 1;
+        else high = middle;
+      }
+      return positions[low] ?? -1;
     }
 
     function getDependencies(variableId) {
@@ -268,6 +288,7 @@
       const references = collectReferences(node);
       const positionedReferences = [];
       let fallbackCursor = 0;
+      let fallbackPositions = null;
 
       references.forEach((reference) => {
         const dependency = variablesById.get(reference.id);
@@ -298,7 +319,8 @@
         } else {
           const literal = reference.literal || dependency.name;
           if (!literal) return;
-          start = findUnquotedVariable(formula, literal, fallbackCursor);
+          fallbackPositions ||= indexUnquotedVariables(formula);
+          start = findIndexedVariable(fallbackPositions, literal, fallbackCursor);
           if (start < 0) return;
           length = literal.length + 2;
           fallbackCursor = start + length;

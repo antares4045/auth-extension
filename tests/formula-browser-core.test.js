@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { performance } = require('node:perf_hooks');
 
 const FormulaBrowserCore = require('../content/formula-browser-core.js');
 
@@ -621,6 +622,27 @@ test('игнорирует повреждённые координаты AST и 
   ], []);
 
   assert.equal(model.expandFormula('root').formula, '=(2)+1');
+});
+
+test('индексирует формулу один раз для множества повреждённых ссылок', () => {
+  const formula = `=${'x'.repeat(149999)}`;
+  const references = Array.from({ length: 5000 }, () => ({
+    nodeType: 'var', varId: 'child', literal: 'Missing', start: -1, length: 0,
+  }));
+  const model = FormulaBrowserCore.createModel([
+    {
+      id: 'root', name: 'Root', formula,
+      parsedFormula: { root: { nodeType: 'function', args: references } },
+    },
+    { id: 'child', name: 'Child', formula: '=2', parsedFormula: { root: null } },
+  ], []);
+
+  const startedAt = performance.now();
+  const expansion = model.expandFormula('root');
+  const elapsed = performance.now() - startedAt;
+
+  assert.equal(expansion.formula, formula);
+  assert.ok(elapsed < 1000, `fallback-поиск занял ${Math.round(elapsed)} мс`);
 });
 
 test('собирает уникальные DP-источники через вложенные и Merge-переменные', () => {

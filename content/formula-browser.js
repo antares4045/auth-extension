@@ -912,8 +912,59 @@
     }
     const refs = uniqueReferences(core.collectReferences(root));
     if (!refs.length) body.appendChild(element('p', 'fb-muted', 'Формула не содержит переменных.'));
-    else body.appendChild(renderReferenceTree(refs, ancestors));
+    else {
+      const tree = renderReferenceTree(refs, ancestors);
+      if (tree.querySelector('.fb-tree-toggle')) {
+        const controls = element('div', 'fb-tree-controls');
+        const expandAll = element('button', 'fb-tree-expand-all', 'Развернуть всё');
+        expandAll.type = 'button';
+        expandAll.addEventListener('click', () => toggleWholeTree(tree, expandAll));
+        controls.appendChild(expandAll);
+        body.appendChild(controls);
+      }
+      body.appendChild(tree);
+    }
     return sectionCard('Дерево зависимостей', body);
+  }
+
+  async function toggleWholeTree(tree, button) {
+    const hasCollapsed = tree.querySelector('.fb-tree-toggle[aria-expanded="false"]');
+    button.disabled = true;
+
+    if (!hasCollapsed) {
+      const expanded = Array.from(
+        tree.querySelectorAll('.fb-tree-toggle[aria-expanded="true"]'),
+      ).reverse();
+      expanded.forEach((toggle) => toggle.click());
+      button.textContent = 'Развернуть всё';
+      button.disabled = false;
+      setStatus('Дерево зависимостей свернуто', 'neutral');
+      return;
+    }
+
+    let expandedCount = 0;
+    const maxExpandedBranches = 2000;
+    while (expandedCount < maxExpandedBranches) {
+      const collapsed = Array.from(
+        tree.querySelectorAll('.fb-tree-toggle[aria-expanded="false"]'),
+      ).slice(0, Math.min(100, maxExpandedBranches - expandedCount));
+      if (!collapsed.length) break;
+      collapsed.forEach((toggle) => toggle.click());
+      expandedCount += collapsed.length;
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+
+    const truncated = Boolean(tree.querySelector('.fb-tree-toggle[aria-expanded="false"]'));
+    button.textContent = truncated ? 'Развернуть ещё' : 'Свернуть всё';
+    button.disabled = false;
+    if (truncated) {
+      setStatus(
+        `Дерево частично раскрыто: достигнут лимит ${maxExpandedBranches} ветвей`,
+        'warning',
+      );
+    } else {
+      setStatus('Дерево зависимостей раскрыто', 'success');
+    }
   }
 
   function renderReferenceTree(references, ancestors) {
@@ -1477,6 +1528,10 @@
       .fb-source-id { color: #64748b; }
       .fb-source code { grid-column: 1 / -1; color: #8492a6; font-size: 11px; overflow-wrap: anywhere; }
       .fb-tree { max-height: 520px; overflow: auto; padding-right: 3px; }
+      .fb-tree-controls { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+      .fb-tree-expand-all { padding: 2px 4px; border: 0; background: transparent; color: #58799c; font-size: 10px; cursor: pointer; }
+      .fb-tree-expand-all:hover { color: #255da9; text-decoration: underline; }
+      .fb-tree-expand-all:disabled { color: #9aa8b7; cursor: wait; text-decoration: none; }
       .fb-tree-list { margin: 0; padding: 0 0 0 17px; border-left: 1px solid #dbe4ee; list-style: none; }
       .fb-tree > .fb-tree-list { padding-left: 0; border-left: 0; }
       .fb-tree-item { position: relative; margin: 5px 0; }

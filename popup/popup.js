@@ -462,12 +462,29 @@ function renderCleanupPreview() {
         removeButton.setAttribute('aria-label', `Убрать ${name.textContent} из списка`);
         removeButton.textContent = '×';
         removeButton.addEventListener('click', () => {
+            if (removeButton.disabled) return;
             const itemIndex = cleanupPreviewItems.indexOf(item);
             if (itemIndex < 0) return;
+            removeButton.disabled = true;
+            removeButton.classList.add('is-loading');
+            removeButton.setAttribute('aria-busy', 'true');
+            removeButton.textContent = '';
+            row.classList.add('is-removing');
             cleanupPreviewItems.splice(itemIndex, 1);
-            row.remove();
-            if (cleanupPreviewItems.length === 0) renderCleanupPreview();
-            else updateCleanupPreviewSummary();
+            if (cleanupPreviewItems.length === 0) {
+                document.getElementById('cleanup-confirm-btn').disabled = true;
+            }
+
+            const removeItem = () => {
+                row.remove();
+                if (cleanupPreviewItems.length === 0) renderCleanupPreview();
+                else updateCleanupPreviewSummary();
+            };
+            if (typeof requestAnimationFrame === 'function') {
+                requestAnimationFrame(() => setTimeout(removeItem, 0));
+            } else {
+                setTimeout(removeItem, 0);
+            }
         });
 
         controls.append(forceLabel, removeButton);

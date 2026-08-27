@@ -149,13 +149,14 @@ test('операции с настройкой отчёта получают д�
   }
 });
 
-test('исключение объекта не перерисовывает весь большой список', () => {
+test('исключение объекта показывает loader и не перерисовывает весь большой список', async () => {
   let createdElements = 0;
   const elements = new Map();
 
   function cleanupElement() {
     createdElements += 1;
     const listeners = {};
+    const classes = new Set();
     let text = '';
     return {
       children: [],
@@ -164,7 +165,17 @@ test('исключение объекта не перерисовывает ве
       checked: false,
       hidden: false,
       title: '',
-      classList: { add() {}, remove() {}, toggle() {} },
+      classList: {
+        add(...names) { names.forEach((name) => classes.add(name)); },
+        remove(...names) { names.forEach((name) => classes.delete(name)); },
+        toggle(name, force) {
+          if (force === true) classes.add(name);
+          else if (force === false) classes.delete(name);
+          else if (classes.has(name)) classes.delete(name);
+          else classes.add(name);
+        },
+        contains(name) { return classes.has(name); },
+      },
       set textContent(value) {
         text = String(value);
         if (text === '') this.children = [];
@@ -198,6 +209,7 @@ test('исключение объекта не перерисовывает ве
     window: { close() {} },
     setTimeout,
     clearTimeout,
+    requestAnimationFrame(callback) { setTimeout(callback, 0); },
     ObjectCleanupCore: require('../content/object-cleanup-core.js'),
     document: {
       getElementById: element,
@@ -240,6 +252,12 @@ test('исключение объекта не перерисовывает ве
   const createdBeforeRemoval = createdElements;
   removeButton.dispatch('click');
 
+  assert.equal(removeButton.disabled, true);
+  assert.equal(removeButton.classList.contains('is-loading'), true);
+  assert.equal(vm.runInContext('cleanupPreviewItems.length', context), 999);
+  assert.equal(list.children.length, 1000, 'строка должна пережить хотя бы одну отрисовку loader');
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(list.children.length, 999);
   assert.ok(
     createdElements - createdBeforeRemoval < 20,

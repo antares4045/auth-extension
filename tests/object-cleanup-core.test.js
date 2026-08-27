@@ -31,7 +31,7 @@ test('отделяет виды объектов от видов ролей па
     force: false,
   }, 'USER');
 
-  assert.deepEqual(params.kindsFilter, ['SL', 'CON', 'REP']);
+  assert.deepEqual(params.kindsFilter, ['SL', 'CN', 'REP']);
   assert.deepEqual(params.folderRoleFilter.kindFilters, ['UNV', 'CN', 'REP']);
 });
 

@@ -16,7 +16,7 @@
 
   const OBJECT_KIND_FILTERS = Object.freeze({
     UNV: Object.freeze(['SL']),
-    CN: Object.freeze(['CON']),
+    CN: Object.freeze(['CN']),
     REP: Object.freeze(['REP']),
   });
 

@@ -74,6 +74,11 @@ function addNewInstance() {
 let currentTab = 'instances';
 const POPUP_MESSAGE_TIMEOUT_MS = 12000;
 const REPORT_OPERATION_BUDGET_MS = 10000;
+const CLEANUP_STORAGE_KEY = 'cleanupSettings';
+const CLEANUP_PREVIEW_TIMEOUT_MS = 120000;
+const CLEANUP_DELETE_TIMEOUT_MS = 10 * 60 * 1000;
+let cleanupPreviewItems = [];
+let cleanupPreviewTabId = null;
 
 function withTimeout(promise, timeoutMs = POPUP_MESSAGE_TIMEOUT_MS) {
     let timer;
@@ -316,6 +321,7 @@ async function onImportSettings(event) {
 
         await loadInstances();
         await loadFormulaBrowserShortcut();
+        await loadCleanupSettings();
 
         const pendingShortcut = result.manualShortcuts[0];
         if (pendingShortcut) {
@@ -348,6 +354,226 @@ async function onImportSettings(event) {
     }
 }
 
+function readCleanupSettingsFromForm() {
+    return {
+        objectTypes: [...document.querySelectorAll('[data-cleanup-object-type]:checked')]
+            .map((input) => input.dataset.cleanupObjectType),
+        locations: [...document.querySelectorAll('[data-cleanup-location]:checked')]
+            .map((input) => input.dataset.cleanupLocation),
+        mask: document.getElementById('cleanup-mask').value,
+        force: document.getElementById('cleanup-force').checked,
+    };
+}
+
+function applyCleanupSettingsToForm(settingsValue) {
+    const settings = ObjectCleanupCore.normalizeSettings(settingsValue);
+    document.querySelectorAll('[data-cleanup-object-type]').forEach((input) => {
+        input.checked = settings.objectTypes.includes(input.dataset.cleanupObjectType);
+    });
+    document.querySelectorAll('[data-cleanup-location]').forEach((input) => {
+        input.checked = settings.locations.includes(input.dataset.cleanupLocation);
+    });
+    document.getElementById('cleanup-mask').value = settings.mask;
+    document.getElementById('cleanup-force').checked = settings.force;
+}
+
+async function loadCleanupSettings() {
+    const result = await chrome.storage.sync.get(CLEANUP_STORAGE_KEY);
+    applyCleanupSettingsToForm(result[CLEANUP_STORAGE_KEY]);
+}
+
+async function saveCleanupSettings() {
+    const settings = readCleanupSettingsFromForm();
+    await chrome.storage.sync.set({ [CLEANUP_STORAGE_KEY]: settings });
+    return settings;
+}
+
+function onCleanupSettingsChanged() {
+    saveCleanupSettings().catch((error) => {
+        showCleanupStatus(`Не удалось сохранить параметры: ${error.message}`, true);
+    });
+}
+
+function showCleanupStatus(message, isError = false) {
+    const status = document.getElementById('cleanup-status');
+    status.textContent = message;
+    status.classList.toggle('is-error', isError);
+}
+
+function cleanupLocationLabel(location) {
+    return ObjectCleanupCore.LOCATIONS[location] || location;
+}
+
+function updateCleanupPreviewSummary() {
+    const forcedCount = cleanupPreviewItems.filter(({ force }) => force).length;
+    document.getElementById('cleanup-preview-summary').textContent =
+        `Объектов: ${cleanupPreviewItems.length}. Безвозвратно: ${forcedCount}.`;
+    document.getElementById('cleanup-confirm-btn').disabled = cleanupPreviewItems.length === 0;
+}
+
+function renderCleanupPreview() {
+    const list = document.getElementById('cleanup-preview-list');
+    list.textContent = '';
+    if (cleanupPreviewItems.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'cleanup-empty';
+        empty.textContent = 'В списке не осталось объектов.';
+        list.appendChild(empty);
+        updateCleanupPreviewSummary();
+        return;
+    }
+
+    cleanupPreviewItems.forEach((item, index) => {
+        const row = document.createElement('div');
+        row.className = 'cleanup-preview-item';
+
+        const name = document.createElement('div');
+        name.className = 'cleanup-preview-name';
+        name.textContent = item.name || `Объект #${item.id}`;
+        name.title = name.textContent;
+
+        const meta = document.createElement('div');
+        meta.className = 'cleanup-preview-meta';
+        meta.textContent = [
+            item.kind,
+            cleanupLocationLabel(item.location),
+            `id ${item.id}`,
+            item.path,
+        ].filter(Boolean).join(' · ');
+        meta.title = meta.textContent;
+
+        const controls = document.createElement('div');
+        controls.className = 'cleanup-item-controls';
+        const forceLabel = document.createElement('label');
+        forceLabel.className = 'cleanup-option cleanup-item-force';
+        const forceInput = document.createElement('input');
+        forceInput.type = 'checkbox';
+        forceInput.checked = item.force === true;
+        forceInput.addEventListener('change', () => {
+            cleanupPreviewItems[index].force = forceInput.checked;
+            updateCleanupPreviewSummary();
+        });
+        forceLabel.append(forceInput, document.createTextNode('Безвозвратно'));
+
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'cleanup-remove-button';
+        removeButton.title = 'Убрать из списка';
+        removeButton.setAttribute('aria-label', `Убрать ${name.textContent} из списка`);
+        removeButton.textContent = '×';
+        removeButton.addEventListener('click', () => {
+            cleanupPreviewItems.splice(index, 1);
+            renderCleanupPreview();
+        });
+
+        controls.append(forceLabel, removeButton);
+        row.append(name, controls, meta);
+        list.appendChild(row);
+    });
+    updateCleanupPreviewSummary();
+}
+
+function closeCleanupPreview() {
+    document.getElementById('cleanup-preview-modal').hidden = true;
+}
+
+async function onPreviewCleanup(event) {
+    event.preventDefault();
+    const button = document.getElementById('cleanup-preview-btn');
+    button.disabled = true;
+    button.textContent = 'Поиск...';
+    showCleanupStatus('Ищу объекты на текущем инстансе...');
+
+    try {
+        const settings = await saveCleanupSettings();
+        ObjectCleanupCore.validateSettings(settings);
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.id) throw new Error('Активная вкладка не найдена');
+        const response = await withTimeout(
+            chrome.tabs.sendMessage(tab.id, {
+                action: 'previewObjectCleanup',
+                settings,
+            }),
+            CLEANUP_PREVIEW_TIMEOUT_MS,
+        );
+        if (!response?.success) {
+            throw new Error(response?.error || 'Контентный скрипт не ответил');
+        }
+
+        cleanupPreviewTabId = tab.id;
+        cleanupPreviewItems = response.items.map((item) => ({ ...item }));
+        renderCleanupPreview();
+        const warning = document.getElementById('cleanup-preview-warning');
+        warning.textContent = (response.warnings || []).join('\n');
+        warning.hidden = !warning.textContent;
+        document.getElementById('cleanup-delete-result').textContent = '';
+        document.getElementById('cleanup-delete-result').classList.remove('is-error');
+        document.getElementById('cleanup-preview-modal').hidden = false;
+        showCleanupStatus(`Найдено объектов: ${cleanupPreviewItems.length}.`);
+    } catch (error) {
+        console.error('Ошибка подготовки очистки:', error);
+        showCleanupStatus(
+            `Не удалось выполнить поиск: ${error.message}. Откройте авторизованный инстанс и обновите его страницу.`,
+            true,
+        );
+    } finally {
+        button.disabled = false;
+        button.textContent = 'Найти объекты';
+    }
+}
+
+async function onConfirmCleanup() {
+    if (cleanupPreviewItems.length === 0) return;
+    const button = document.getElementById('cleanup-confirm-btn');
+    const cancelButton = document.getElementById('cleanup-cancel-btn');
+    const resultStatus = document.getElementById('cleanup-delete-result');
+    button.disabled = true;
+    cancelButton.disabled = true;
+    button.textContent = 'Удаление...';
+    resultStatus.textContent = `Удалено 0 из ${cleanupPreviewItems.length}...`;
+    resultStatus.classList.remove('is-error');
+
+    const requestedItems = cleanupPreviewItems.map(({ id, name, force }) => ({ id, name, force }));
+    try {
+        if (!cleanupPreviewTabId) throw new Error('Исходная вкладка поиска не найдена');
+        const response = await withTimeout(
+            chrome.tabs.sendMessage(cleanupPreviewTabId, {
+                action: 'deleteCleanupObjects',
+                items: requestedItems,
+            }),
+            CLEANUP_DELETE_TIMEOUT_MS,
+        );
+        if (!response?.success) throw new Error(response?.error || 'Контентный скрипт не ответил');
+
+        const failedById = new Map(
+            response.results.filter(({ success }) => !success).map((result) => [String(result.id), result]),
+        );
+        const deletedCount = response.results.length - failedById.size;
+        cleanupPreviewItems = cleanupPreviewItems.filter((item) => failedById.has(String(item.id)));
+        renderCleanupPreview();
+
+        if (failedById.size > 0) {
+            const firstErrors = [...failedById.values()].slice(0, 3)
+                .map((result) => `${result.name || result.id}: ${result.error}`)
+                .join('\n');
+            resultStatus.textContent = `Удалено: ${deletedCount}. Ошибок: ${failedById.size}.\n${firstErrors}`;
+            resultStatus.classList.add('is-error');
+            showCleanupStatus(`Удалено: ${deletedCount}, ошибок: ${failedById.size}.`, true);
+        } else {
+            resultStatus.textContent = `Успешно удалено: ${deletedCount}.`;
+            showCleanupStatus(`Успешно удалено: ${deletedCount}.`);
+        }
+    } catch (error) {
+        console.error('Ошибка выполнения очистки:', error);
+        resultStatus.textContent = `Удаление не завершено: ${error.message}`;
+        resultStatus.classList.add('is-error');
+    } finally {
+        button.textContent = 'Удалить выбранное';
+        button.disabled = cleanupPreviewItems.length === 0;
+        cancelButton.disabled = false;
+    }
+}
+
 // --- Остальной код (инициализация списка инстансов и т.д.) ---
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -359,12 +585,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('import-settings-btn').addEventListener('click', onChooseImportFile);
     document.getElementById('import-settings-file').addEventListener('change', onImportSettings);
     document.getElementById('apply-imported-shortcut-btn').addEventListener('click', openShortcutSettings);
+    document.getElementById('cleanup-form').addEventListener('submit', onPreviewCleanup);
+    document.getElementById('cleanup-form').addEventListener('change', onCleanupSettingsChanged);
+    document.getElementById('cleanup-mask').addEventListener('input', onCleanupSettingsChanged);
+    document.getElementById('cleanup-preview-close').addEventListener('click', closeCleanupPreview);
+    document.getElementById('cleanup-cancel-btn').addEventListener('click', closeCleanupPreview);
+    document.getElementById('cleanup-confirm-btn').addEventListener('click', onConfirmCleanup);
 
     // Настройка вкладок
     document.querySelectorAll('.tab-button').forEach(btn => {
         btn.addEventListener('click', () => showTab(btn.getAttribute('data-tab')));
     });
 
-    await Promise.all([loadInstances(), checkAndSetupReportTab()]);
+    await Promise.all([loadInstances(), checkAndSetupReportTab(), loadCleanupSettings()]);
     await loadFormulaBrowserShortcut();
 });

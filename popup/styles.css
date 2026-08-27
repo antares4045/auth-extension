@@ -22,7 +22,7 @@
 }
 
 body {
-    width: 320px;
+    width: 400px;
     font-family: 'Roboto', sans-serif;
     background-color: var(--background);
     color: var(--on-background);
@@ -251,6 +251,12 @@ body {
     font-size: 12px;
 }
 
+.material-tabs .material-tab {
+    flex: 1 1 auto;
+    padding-inline: 10px;
+    font-size: 12px;
+}
+
 .formula-browser-card {
     margin-top: 12px;
 }
@@ -325,4 +331,237 @@ body {
     color: var(--error);
 }
 
-/* Адаптивная ширина для маленьких экранов (уже 320px) */
+[hidden] {
+    display: none !important;
+}
+
+.cleanup-form {
+    display: grid;
+    gap: 12px;
+}
+
+.cleanup-fieldset {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid rgba(0,0,0,0.15);
+    border-radius: 6px;
+}
+
+.cleanup-fieldset legend,
+.cleanup-input-label {
+    padding: 0 4px;
+    color: rgba(0,0,0,0.7);
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.cleanup-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    color: rgba(0,0,0,0.78);
+    font-size: 12px;
+    line-height: 1.35;
+    cursor: pointer;
+}
+
+.cleanup-option input {
+    margin-top: 1px;
+    accent-color: var(--primary-color);
+}
+
+.material-input {
+    width: 100%;
+    margin-top: -8px;
+    padding: 9px 10px;
+    border: 1px solid rgba(0,0,0,0.28);
+    border-radius: 4px;
+    outline: none;
+    font: inherit;
+}
+
+.material-input:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 1px var(--primary-color);
+}
+
+.cleanup-hint {
+    margin-top: -8px;
+    color: rgba(0,0,0,0.55);
+    font-size: 11px;
+    line-height: 1.35;
+}
+
+.cleanup-force-default {
+    padding: 10px;
+    border-radius: 4px;
+    background: rgba(176,0,32,0.06);
+    color: #7a0016;
+}
+
+.cleanup-status {
+    color: rgba(0,0,0,0.65);
+}
+
+.cleanup-status.is-error,
+.cleanup-delete-result.is-error {
+    color: var(--error);
+}
+
+.cleanup-modal {
+    position: fixed;
+    z-index: 20;
+    inset: 0;
+    display: flex;
+    align-items: stretch;
+    padding: 12px;
+    background: rgba(0,0,0,0.42);
+}
+
+.cleanup-modal-card {
+    display: flex;
+    width: 100%;
+    min-height: 0;
+    flex-direction: column;
+    padding: 14px;
+    border-radius: 8px;
+    background: var(--surface);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.28);
+}
+
+.cleanup-modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.cleanup-modal-header .material-subtitle {
+    margin-bottom: 3px;
+}
+
+.cleanup-preview-summary {
+    color: rgba(0,0,0,0.62);
+    font-size: 11px;
+}
+
+.cleanup-icon-button {
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: rgba(0,0,0,0.62);
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.cleanup-icon-button:hover {
+    background: rgba(0,0,0,0.06);
+}
+
+.cleanup-warning {
+    margin-top: 8px;
+    padding: 8px;
+    border-radius: 4px;
+    background: #fff4d6;
+    color: #704f00;
+    font-size: 11px;
+    white-space: pre-line;
+}
+
+.cleanup-preview-list {
+    flex: 1 1 auto;
+    min-height: 80px;
+    margin: 10px 0;
+    overflow-y: auto;
+    border: 1px solid rgba(0,0,0,0.12);
+    border-radius: 6px;
+}
+
+.cleanup-preview-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 10px;
+    padding: 10px;
+    border-bottom: 1px solid rgba(0,0,0,0.08);
+}
+
+.cleanup-preview-item:last-child {
+    border-bottom: 0;
+}
+
+.cleanup-preview-name {
+    overflow: hidden;
+    font-size: 12px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cleanup-preview-meta {
+    overflow: hidden;
+    color: rgba(0,0,0,0.55);
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cleanup-item-controls {
+    display: flex;
+    grid-row: span 2;
+    align-items: center;
+    gap: 7px;
+}
+
+.cleanup-item-force {
+    font-size: 10px;
+    white-space: nowrap;
+}
+
+.cleanup-remove-button {
+    padding: 2px 5px;
+    border: 0;
+    background: transparent;
+    color: var(--error);
+    font-size: 17px;
+    cursor: pointer;
+}
+
+.cleanup-empty {
+    padding: 24px 12px;
+    color: rgba(0,0,0,0.55);
+    text-align: center;
+    font-size: 12px;
+}
+
+.cleanup-delete-result {
+    margin: 0 0 8px;
+    color: rgba(0,0,0,0.7);
+}
+
+.cleanup-modal-actions {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr;
+    gap: 8px;
+    margin-top: auto;
+}
+
+.cleanup-danger-button {
+    background: var(--error);
+    color: #fff;
+    box-shadow: var(--shadow);
+}
+
+.cleanup-danger-button:hover {
+    background: #850018;
+}
+
+.cleanup-danger-button:disabled {
+    opacity: 0.45;
+}
+
+/* Popup остаётся компактным, но вмещает три вкладки и список очистки. */

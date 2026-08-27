@@ -12,6 +12,7 @@
         <div class="material-tabs">
             <button class="tab-button material-tab active" data-tab="instances">Настройки</button>
             <button class="tab-button material-tab" data-tab="report" id="reportTabBtn" style="display: none;">Управление</button>
+            <button class="tab-button material-tab" data-tab="cleanup">Очистка</button>
         </div>
 
         <!-- Содержимое вкладки "Настройки" -->
@@ -53,8 +54,56 @@
                 </div>
             </div>
         </div>
+
+        <div id="cleanup-tab" class="tab-content material-tab-pane">
+            <div class="material-subtitle">Массовое удаление</div>
+            <div class="material-card-description">Поиск выполняется рекурсивно через REPOS.FIND_OBJECTS на текущем открытом инстансе.</div>
+            <form id="cleanup-form" class="cleanup-form">
+                <fieldset class="cleanup-fieldset">
+                    <legend>Типы объектов</legend>
+                    <label class="cleanup-option"><input type="checkbox" data-cleanup-object-type="UNV"> Юнивёрсы</label>
+                    <label class="cleanup-option"><input type="checkbox" data-cleanup-object-type="CN"> Семантика</label>
+                    <label class="cleanup-option"><input type="checkbox" data-cleanup-object-type="REP"> Отчёты</label>
+                </fieldset>
+                <fieldset class="cleanup-fieldset">
+                    <legend>Расположение</legend>
+                    <label class="cleanup-option"><input type="checkbox" data-cleanup-location="USER"> Личное хранилище</label>
+                    <label class="cleanup-option"><input type="checkbox" data-cleanup-location="PUBLIC"> Общие папки</label>
+                    <label class="cleanup-option"><input type="checkbox" data-cleanup-location="REC_BIN"> Корзина</label>
+                </fieldset>
+                <label class="cleanup-input-label" for="cleanup-mask">Маска имени</label>
+                <input id="cleanup-mask" class="material-input" type="text" placeholder="например, [tmp]*" autocomplete="off">
+                <div class="cleanup-hint">Символ * заменяет любое количество символов; регистр не учитывается.</div>
+                <label class="cleanup-option cleanup-force-default">
+                    <input id="cleanup-force" type="checkbox">
+                    Удалять безвозвратно по умолчанию
+                </label>
+                <button id="cleanup-preview-btn" class="material-button material-button-primary material-button-block" type="submit">Найти объекты</button>
+                <div id="cleanup-status" class="material-inline-status cleanup-status" aria-live="polite"></div>
+            </form>
+        </div>
+    </div>
+
+    <div id="cleanup-preview-modal" class="cleanup-modal" role="dialog" aria-modal="true" aria-labelledby="cleanup-preview-title" hidden>
+        <div class="cleanup-modal-card">
+            <div class="cleanup-modal-header">
+                <div>
+                    <div id="cleanup-preview-title" class="material-subtitle">Подтверждение удаления</div>
+                    <div id="cleanup-preview-summary" class="cleanup-preview-summary"></div>
+                </div>
+                <button id="cleanup-preview-close" class="cleanup-icon-button" type="button" aria-label="Закрыть">×</button>
+            </div>
+            <div id="cleanup-preview-warning" class="cleanup-warning" hidden></div>
+            <div id="cleanup-preview-list" class="cleanup-preview-list"></div>
+            <div id="cleanup-delete-result" class="material-inline-status cleanup-delete-result" aria-live="polite"></div>
+            <div class="cleanup-modal-actions">
+                <button id="cleanup-cancel-btn" class="material-button material-button-secondary" type="button">Отмена</button>
+                <button id="cleanup-confirm-btn" class="material-button cleanup-danger-button" type="button">Удалить выбранное</button>
+            </div>
+        </div>
     </div>
     <script src="settings-transfer.js"></script>
+    <script src="../content/object-cleanup-core.js"></script>
     <script src="popup.js"></script>
 </body>
 </html>

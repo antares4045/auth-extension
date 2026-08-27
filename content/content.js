@@ -251,8 +251,39 @@ function updateApiUrl({endpoint = '/api', host = '' }={})
 
 
 
+function cleanupRequestJson(command, params) {
+    return requestJsonFromBridge(command, params, false, { timeoutMs: 60000 });
+}
+
+function respondToCleanup(operation, toPayload, errorLabel, sendResponse) {
+    operation.then(
+        (result) => sendResponse({ success: true, ...toPayload(result) }),
+        (error) => {
+            console.error(errorLabel, error);
+            sendResponse({ success: false, error: error.message });
+        },
+    );
+    return true;
+}
+
 // Добавляем обработчик сообщений от попапа
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'previewObjectCleanup') {
+        return respondToCleanup(
+            ObjectCleanupCore.collectCandidates(message.settings, cleanupRequestJson),
+            (result) => result,
+            'Ошибка поиска объектов для удаления:',
+            sendResponse,
+        );
+    }
+    if (message.action === 'deleteCleanupObjects') {
+        return respondToCleanup(
+            ObjectCleanupCore.deleteCandidates(message.items, cleanupRequestJson),
+            (results) => ({ results }),
+            'Ошибка массового удаления объектов:',
+            sendResponse,
+        );
+    }
     if (message.action === 'getSetting') {
         // Асинхронно получаем значение настройки
         getCurrentSetting(message.params, message.deadline).then(value => {

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Universal Auth Injector",
-  "version": "1.2.8",
+  "version": "1.3.0",
   "permissions": ["storage", "webNavigation", "tabs"],
   "commands": {
     "open-formula-browser": {
@@ -22,6 +22,7 @@
     "matches": ["<all_urls>"],
     "js": [
       "assets/crypto-js.js",
+      "content/object-cleanup-core.js",
       "content/content.js",
       "content/formula-browser-core.js",
       "content/formula-browser.js"

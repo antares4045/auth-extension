@@ -15,6 +15,12 @@ test('экспорт сохраняет все данные storage.sync и на
       instances: { 'https://example.test': { login: 'user', password: 'secret' } },
       activeInstances: ['https://example.test'],
       formulaBrowserSettings: { maxDepth: 3 },
+      cleanupSettings: {
+        objectTypes: ['REP'],
+        locations: ['REC_BIN'],
+        mask: '[tmp]*',
+        force: true,
+      },
     },
     [{ name: 'open-formula-browser', shortcut: 'Alt+V' }],
     '2026-08-26T10:00:00.000Z',
@@ -28,6 +34,12 @@ test('экспорт сохраняет все данные storage.sync и на
       instances: { 'https://example.test': { login: 'user', password: 'secret' } },
       activeInstances: ['https://example.test'],
       formulaBrowserSettings: { maxDepth: 3 },
+      cleanupSettings: {
+        objectTypes: ['REP'],
+        locations: ['REC_BIN'],
+        mask: '[tmp]*',
+        force: true,
+      },
     },
     shortcuts: { 'open-formula-browser': 'Alt+V' },
   });

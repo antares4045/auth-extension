@@ -14,6 +14,12 @@
     REP: 'Отчёты',
   });
 
+  const OBJECT_KIND_FILTERS = Object.freeze({
+    UNV: Object.freeze(['SL']),
+    CN: Object.freeze(['CON']),
+    REP: Object.freeze(['REP']),
+  });
+
   const LOCATIONS = Object.freeze({
     USER: 'Личное хранилище',
     PUBLIC: 'Общие папки',
@@ -64,10 +70,13 @@
     validateSettings(settings);
     const locationFilter = LOCATION_FILTERS[location];
     if (!locationFilter) throw new Error(`Неизвестное расположение: ${location}`);
+    const kindsFilter = [...new Set(
+      settings.objectTypes.flatMap((objectType) => OBJECT_KIND_FILTERS[objectType]),
+    )];
     return {
       searchType: 'MASK',
       searchMask: [settings.mask.trim()],
-      kindsFilter: [...settings.objectTypes],
+      kindsFilter,
       folderRoleFilter: {
         rightFilters: [...locationFilter.rightFilters],
         kindFilters: [...settings.objectTypes],
@@ -205,6 +214,7 @@
   const api = {
     DEFAULT_SETTINGS,
     OBJECT_TYPES,
+    OBJECT_KIND_FILTERS,
     LOCATIONS,
     normalizeSettings,
     validateSettings,

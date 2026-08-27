@@ -12,7 +12,7 @@ test('строит параметры REPOS.FIND_OBJECTS с серверной �
   }, 'REC_BIN'), {
     searchType: 'MASK',
     searchMask: ['[tmp]*'],
-    kindsFilter: ['UNV', 'REP'],
+    kindsFilter: ['SL', 'REP'],
     folderRoleFilter: {
       rightFilters: ['USER'],
       kindFilters: ['UNV', 'REP'],
@@ -21,6 +21,18 @@ test('строит параметры REPOS.FIND_OBJECTS с серверной �
     sort: { field: 'id', sortDirection: 'ASC' },
     treeResult: 0,
   });
+});
+
+test('отделяет виды объектов от видов ролей папок', () => {
+  const params = Cleanup.buildFindParams({
+    objectTypes: ['UNV', 'CN', 'REP'],
+    locations: ['USER'],
+    mask: '*',
+    force: false,
+  }, 'USER');
+
+  assert.deepEqual(params.kindsFilter, ['SL', 'CON', 'REP']);
+  assert.deepEqual(params.folderRoleFilter.kindFilters, ['UNV', 'CN', 'REP']);
 });
 
 test('собирает найденные файлы, включая вложенный древовидный ответ', async () => {

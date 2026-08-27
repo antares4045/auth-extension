@@ -423,7 +423,7 @@ function renderCleanupPreview() {
         return;
     }
 
-    cleanupPreviewItems.forEach((item, index) => {
+    cleanupPreviewItems.forEach((item) => {
         const row = document.createElement('div');
         row.className = 'cleanup-preview-item';
 
@@ -450,7 +450,7 @@ function renderCleanupPreview() {
         forceInput.type = 'checkbox';
         forceInput.checked = item.force === true;
         forceInput.addEventListener('change', () => {
-            cleanupPreviewItems[index].force = forceInput.checked;
+            item.force = forceInput.checked;
             updateCleanupPreviewSummary();
         });
         forceLabel.append(forceInput, document.createTextNode('Безвозвратно'));
@@ -462,8 +462,12 @@ function renderCleanupPreview() {
         removeButton.setAttribute('aria-label', `Убрать ${name.textContent} из списка`);
         removeButton.textContent = '×';
         removeButton.addEventListener('click', () => {
-            cleanupPreviewItems.splice(index, 1);
-            renderCleanupPreview();
+            const itemIndex = cleanupPreviewItems.indexOf(item);
+            if (itemIndex < 0) return;
+            cleanupPreviewItems.splice(itemIndex, 1);
+            row.remove();
+            if (cleanupPreviewItems.length === 0) renderCleanupPreview();
+            else updateCleanupPreviewSummary();
         });
 
         controls.append(forceLabel, removeButton);
@@ -512,10 +516,7 @@ async function onPreviewCleanup(event) {
         showCleanupStatus(`Найдено объектов: ${cleanupPreviewItems.length}.`);
     } catch (error) {
         console.error('Ошибка подготовки очистки:', error);
-        showCleanupStatus(
-            `Не удалось выполнить поиск: ${error.message}. Откройте авторизованный инстанс и обновите его страницу.`,
-            true,
-        );
+        showCleanupStatus(`Не удалось выполнить поиск: ${error.message}`, true);
     } finally {
         button.disabled = false;
         button.textContent = 'Найти объекты';

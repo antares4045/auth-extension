@@ -105,6 +105,39 @@ test('API-мост отменяет зависший запрос по тайм�
   assert.match(String(result.error), /превышено время ожидания/);
 });
 
+test('API-мост сохраняет серверный текст ошибки при HTTP 500', async () => {
+  global.localStorage = {
+    getItem: (key) => key === 'token' ? '<TEST_TOKEN>' : null,
+    setItem: () => {},
+  };
+  global.sessionStorage = { getItem: () => null };
+  global.window = { location: { origin: 'https://example.test' } };
+  global.document = { addEventListener: () => {} };
+  global.chrome = {
+    storage: { sync: { get: async () => ({ instances: {} }) } },
+    runtime: {
+      onMessage: { addListener: () => {} },
+      sendMessage: () => {},
+    },
+  };
+  global.fetch = async () => ({
+    ok: false,
+    status: 500,
+    text: async () => JSON.stringify({
+      result: 0,
+      errors: [{ text: "Возникли исключения 'Указан не действительный тип объекта '" }],
+    }),
+  });
+
+  delete require.cache[require.resolve('../content/content.js')];
+  require('../content/content.js');
+
+  await assert.rejects(
+    global.AuthInjectorBridge.requestJson('REPOS.FIND_OBJECTS', { searchType: 'MASK' }),
+    /Указан не действительный тип объекта/,
+  );
+});
+
 test('просроченное переключение движка не отправляет запрос к отчёту', async () => {
   let messageListener;
   let fetchCalls = 0;

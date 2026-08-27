@@ -118,14 +118,23 @@ async function requestJsonFromBridge(command, params = null, useReceives = false
     }
 
     const response = await requestToBridge(command, params, useReceives, options);
-    if (!response.ok) throw new Error(`${command}: HTTP ${response.status}`);
-
     const text = await response.text();
+    let data;
     try {
-        return JSON.parse(text);
+        data = JSON.parse(text);
     } catch {
+        if (!response.ok) throw new Error(`${command}: HTTP ${response.status}`);
         throw new Error(`${command}: сервер вернул не JSON`);
     }
+    if (!response.ok) {
+        const firstError = Array.isArray(data?.errors) ? data.errors[0] : null;
+        const details = firstError?.text
+            || firstError?.reason
+            || data?.error?.message
+            || data?.message;
+        throw new Error(`${command}: HTTP ${response.status}${details ? ` — ${details}` : ''}`);
+    }
+    return data;
 }
 
 globalThis.AuthInjectorBridge = Object.freeze({

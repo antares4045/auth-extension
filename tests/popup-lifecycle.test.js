@@ -148,3 +148,101 @@ test('операции с настройкой отчёта получают д�
     assert.ok(message.deadline <= Date.now() + 10000);
   }
 });
+
+test('исключение объекта не перерисовывает весь большой список', () => {
+  let createdElements = 0;
+  const elements = new Map();
+
+  function cleanupElement() {
+    createdElements += 1;
+    const listeners = {};
+    let text = '';
+    return {
+      children: [],
+      className: '',
+      disabled: false,
+      checked: false,
+      hidden: false,
+      title: '',
+      classList: { add() {}, remove() {}, toggle() {} },
+      set textContent(value) {
+        text = String(value);
+        if (text === '') this.children = [];
+      },
+      get textContent() { return text; },
+      addEventListener(type, listener) { listeners[type] = listener; },
+      appendChild(child) {
+        child.parentElement = this;
+        this.children.push(child);
+      },
+      append(...children) { children.forEach((child) => this.appendChild(child)); },
+      setAttribute() {},
+      remove() {
+        const siblings = this.parentElement?.children;
+        if (!siblings) return;
+        const index = siblings.indexOf(this);
+        if (index >= 0) siblings.splice(index, 1);
+      },
+      dispatch(type) { listeners[type]?.({ preventDefault() {} }); },
+    };
+  }
+
+  const element = (id) => {
+    if (!elements.has(id)) elements.set(id, cleanupElement());
+    return elements.get(id);
+  };
+  const context = {
+    URL,
+    console: { log() {}, error() {} },
+    location: { reload() {} },
+    window: { close() {} },
+    setTimeout,
+    clearTimeout,
+    ObjectCleanupCore: require('../content/object-cleanup-core.js'),
+    document: {
+      getElementById: element,
+      createElement: cleanupElement,
+      createTextNode(text) {
+        const node = cleanupElement();
+        node.textContent = text;
+        return node;
+      },
+      querySelectorAll() { return []; },
+      querySelector() { return null; },
+      addEventListener() {},
+    },
+    chrome: {
+      storage: { sync: { get: async () => ({}), set: async () => {} } },
+      tabs: { query: async () => [] },
+      commands: { getAll: async () => [] },
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    fs.readFileSync(path.join(__dirname, '../popup/popup.js'), 'utf8'),
+    context,
+    { filename: 'popup/popup.js' },
+  );
+  vm.runInContext(`
+    cleanupPreviewItems = Array.from({ length: 1000 }, (_, index) => ({
+      id: index + 1,
+      name: 'Объект ' + (index + 1),
+      kind: 'REP',
+      location: 'USER',
+      path: '',
+      force: false,
+    }));
+    renderCleanupPreview();
+  `, context);
+
+  const list = element('cleanup-preview-list');
+  const removeButton = list.children[0].children[1].children[1];
+  const createdBeforeRemoval = createdElements;
+  removeButton.dispatch('click');
+
+  assert.equal(list.children.length, 999);
+  assert.ok(
+    createdElements - createdBeforeRemoval < 20,
+    `создано ${createdElements - createdBeforeRemoval} DOM-узлов вместо точечного удаления`,
+  );
+});

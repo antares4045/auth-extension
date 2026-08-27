@@ -10,7 +10,7 @@
 
   const OBJECT_TYPES = Object.freeze({
     UNV: 'Юнивёрсы',
-    CN: 'Семантика',
+    CN: 'Соединения',
     REP: 'Отчёты',
   });
 

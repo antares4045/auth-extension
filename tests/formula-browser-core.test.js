@@ -4,6 +4,139 @@ const { performance } = require('node:perf_hooks');
 
 const FormulaBrowserCore = require('../content/formula-browser-core.js');
 
+test('отпечаток отчёта учитывает URL и оба receiver', () => {
+  const base = FormulaBrowserCore.createReportFingerprint(
+    'https://example.test/report/1',
+    'receiver-a',
+    'stream-a',
+  );
+
+  assert.equal(
+    base,
+    FormulaBrowserCore.createReportFingerprint(
+      'https://example.test/report/1',
+      'receiver-a',
+      'stream-a',
+    ),
+  );
+  assert.notEqual(
+    base,
+    FormulaBrowserCore.createReportFingerprint(
+      'https://example.test/report/2',
+      'receiver-a',
+      'stream-a',
+    ),
+  );
+  assert.notEqual(
+    base,
+    FormulaBrowserCore.createReportFingerprint(
+      'https://example.test/report/1',
+      'receiver-b',
+      'stream-a',
+    ),
+  );
+  assert.notEqual(
+    base,
+    FormulaBrowserCore.createReportFingerprint(
+      'https://example.test/report/1',
+      'receiver-a',
+      'stream-b',
+    ),
+  );
+});
+
+test('создаёт отдельную проверенную версию переменной, не изменяя исходную', () => {
+  const originalTree = { root: { nodeType: 'var', varId: 'old', literal: 'Источник' } };
+  const refreshedTree = { root: { nodeType: 'var', varId: 'new', literal: 'Источник' } };
+  const original = {
+    id: 'formula',
+    name: 'Формула',
+    formula: '=[Источник]',
+    parsedFormula: originalTree,
+    type: 'Measure',
+  };
+
+  const validated = FormulaBrowserCore.createValidatedVariable(original, {
+    result: 1,
+    isValid: 1,
+    restored: '=([Источник])',
+    tree: refreshedTree,
+  });
+
+  assert.notEqual(validated, original);
+  assert.equal(validated.id, original.id);
+  assert.equal(validated.type, original.type);
+  assert.equal(validated.formula, '=([Источник])');
+  assert.equal(validated.parsedFormula, refreshedTree);
+  assert.equal(original.formula, '=[Источник]');
+  assert.equal(original.parsedFormula, originalTree);
+});
+
+test('не создаёт проверенную версию по ошибочному или неполному ответу', () => {
+  const variable = { id: 'formula', formula: '=1' };
+
+  assert.equal(FormulaBrowserCore.createValidatedVariable(variable, {
+    result: 1,
+    isValid: 0,
+    reason: 'Ошибка',
+  }), null);
+  assert.equal(FormulaBrowserCore.createValidatedVariable(variable, {
+    result: 1,
+    isValid: 1,
+  }), null);
+  assert.equal(FormulaBrowserCore.createValidatedVariable(variable, {
+    result: 1,
+    isValid: 1,
+    tree: {},
+  }), null);
+});
+
+test('проверенная версия переключает модель на актуальный id зависимости', () => {
+  const original = {
+    id: 'formula',
+    name: 'Формула',
+    formula: '=[Источник]',
+    parsedFormula: { root: { nodeType: 'var', varId: 'old', literal: 'Источник' } },
+  };
+  const currentSource = { id: 'new', name: 'Источник', varType: 'DP' };
+  const validated = FormulaBrowserCore.createValidatedVariable(original, {
+    result: 1,
+    isValid: 1,
+    tree: { root: { nodeType: 'var', varId: 'new', literal: 'Источник' } },
+  });
+
+  assert.deepEqual(
+    FormulaBrowserCore.createModel([original, currentSource], []).getDependencies('formula'),
+    [],
+  );
+  assert.deepEqual(
+    FormulaBrowserCore.createModel([validated, currentSource], []).getDependencies('formula'),
+    [currentSource],
+  );
+});
+
+test('слой проверенных переменных стабильно переключается туда и обратно', () => {
+  const original = { id: 'formula', parsedFormula: { root: { varId: 'old' } } };
+  const validated = { id: 'formula', parsedFormula: { root: { varId: 'new' } } };
+  const validations = new Map([
+    ['formula', { status: 'success', variable: validated }],
+  ]);
+
+  assert.equal(
+    FormulaBrowserCore.selectValidatedVariables([original], validations, true)[0],
+    validated,
+  );
+  assert.equal(
+    FormulaBrowserCore.selectValidatedVariables([original], validations, false)[0],
+    original,
+  );
+  assert.equal(
+    FormulaBrowserCore.selectValidatedVariables([original], validations, true)[0],
+    validated,
+  );
+  assert.equal(original.parsedFormula.root.varId, 'old');
+});
+
 test('сохраняет журнал посещений при замене ветки переходов вперёд', () => {
   const history = FormulaBrowserCore.createNavigationHistory();
   const first = { kind: 'variable', id: 'first' };

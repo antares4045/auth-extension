@@ -7,6 +7,8 @@
   const EXPANSION_OPEN_STORAGE_KEY = 'formulaBrowserExpansionOpen';
   const EXPANSION_DEPTH_STORAGE_KEY = 'formulaBrowserExpansionDepth';
   const PARENTHESIS_HIGHLIGHT_STORAGE_KEY = 'formulaBrowserParenthesisHighlight';
+  const REVALIDATE_OPENED_STORAGE_KEY = 'formulaBrowserRevalidateOpenedVariables';
+  const REVALIDATE_CONCURRENCY = 4;
   const POPOVER_CANDIDATE_LIMIT = 100;
   const POPOVER_CANDIDATE_BATCH = 10;
   const POPOVER_SOURCE_LIMIT = 5;
@@ -43,8 +45,17 @@
     panel: null,
     variables: [],
     variablesById: new Map(),
+    sourceVariables: [],
+    sourceVariablesById: new Map(),
     dps: [],
     model: null,
+    variableValidations: new Map(),
+    validationGraphRuns: new Map(),
+    validationGeneration: 0,
+    validationModeRevision: 0,
+    pendingValidationRender: false,
+    reportFingerprint: null,
+    loadingFingerprint: null,
     loaded: false,
     loading: false,
     loadController: null,
@@ -55,6 +66,7 @@
     expansionOpen: false,
     expansionDepth: { kind: 'unlimited' },
     parenthesisHighlight: true,
+    revalidateOpenedVariables: false,
     preferencesLoaded: false,
     preferencesPromise: null,
     popover: null,
@@ -91,9 +103,17 @@
     }
     state.shadow.getElementById('fb-search').focus();
     if (!state.preferencesLoaded) await loadUiPreferences();
+    const fingerprint = currentReportFingerprint();
+    const reportChanged = (
+      (state.loaded && state.reportFingerprint !== fingerprint) ||
+      (state.loading && state.loadingFingerprint !== fingerprint)
+    );
+    if (reportChanged) invalidateReportData();
     if (!state.loaded) {
       const restartAbortedLoad = state.loadController?.signal.aborted === true;
-      if (!state.loading || restartAbortedLoad) void loadData(restartAbortedLoad);
+      if (!state.loading || restartAbortedLoad || reportChanged) {
+        void loadData(restartAbortedLoad || reportChanged);
+      }
     }
   }
 
@@ -144,10 +164,16 @@
           </div>
           <div class="fb-editor-meta">
             <div class="fb-shortcuts">Ctrl+Enter — анализ · Alt+←/→ — история · двойной клик по переменной — перейти · Esc — скрыть</div>
-            <label class="fb-parenthesis-control">
-              <input id="fb-parenthesis-highlight" type="checkbox" checked disabled />
-              <span>Подсвечивать скобки</span>
-            </label>
+            <div class="fb-preference-controls">
+              <label class="fb-checkbox-control">
+                <input id="fb-revalidate-opened" type="checkbox" disabled />
+                <span>Перепроверять открытые переменные</span>
+              </label>
+              <label class="fb-checkbox-control">
+                <input id="fb-parenthesis-highlight" type="checkbox" checked disabled />
+                <span>Подсвечивать скобки</span>
+              </label>
+            </div>
           </div>
         </div>
 
@@ -199,6 +225,24 @@
     $('fb-forward').addEventListener('click', goForward);
     $('fb-refresh').addEventListener('click', () => loadData(true));
     $('fb-analyze').addEventListener('click', analyzeFormula);
+    $('fb-revalidate-opened').addEventListener('change', (event) => {
+      state.validationModeRevision += 1;
+      state.revalidateOpenedVariables = event.currentTarget.checked;
+      state.validationGraphRuns.clear();
+      persistUiPreference(
+        REVALIDATE_OPENED_STORAGE_KEY,
+        state.revalidateOpenedVariables,
+        'Не удалось сохранить повторную проверку переменных',
+      );
+      rebuildActiveVariables();
+      state.pendingValidationRender = false;
+      dismissVariablePopover();
+      renderCurrent();
+      if (state.revalidateOpenedVariables) {
+        const entry = state.history.current();
+        if (entry?.kind === 'variable') startVariableValidationGraph(entry.id);
+      }
+    });
     $('fb-parenthesis-highlight').addEventListener('change', (event) => {
       state.parenthesisHighlight = event.currentTarget.checked;
       persistUiPreference(
@@ -343,7 +387,9 @@
     if (state.loaded && !force) return;
     if (force) state.loadController?.abort();
     const controller = new AbortController();
+    const requestFingerprint = currentReportFingerprint();
     state.loadController = controller;
+    state.loadingFingerprint = requestFingerprint;
     state.loading = true;
     setBusy(true);
     setStatus('Загрузка REP.GET_VARIABLES и REP.GET_DP_LIST…', 'neutral');
@@ -365,21 +411,28 @@
       ]);
 
       if (controller.signal.aborted || state.loadController !== controller) return;
+      if (currentReportFingerprint() !== requestFingerprint) {
+        if (state.host?.style.display !== 'none') void loadData(true);
+        return;
+      }
 
       if (variablesResponse.result !== 1 || !Array.isArray(variablesResponse.variables)) {
         throw new Error('REP.GET_VARIABLES не вернул список переменных');
       }
 
       const rawVariables = variablesResponse.variables;
-      state.variables = rawVariables.filter(
+      state.sourceVariables = rawVariables.filter(
         (variable) =>
           variable &&
           typeof variable === 'object' &&
           hasUsableId(variable.id),
       );
-      state.variablesById = new Map(
-        state.variables.map((variable) => [variable.id, variable]),
+      state.sourceVariablesById = new Map(
+        state.sourceVariables.map((variable) => [variable.id, variable]),
       );
+      state.validationGeneration += 1;
+      state.variableValidations.clear();
+      state.validationGraphRuns.clear();
       const rawDps = Array.isArray(dpsResult.response.dps) ? dpsResult.response.dps : [];
       state.dps = rawDps.filter(
         (dp) =>
@@ -387,7 +440,8 @@
           typeof dp === 'object' &&
           hasUsableId(dp.dp_id),
       );
-      state.model = core.createModel(state.variables, state.dps);
+      rebuildActiveVariables();
+      state.reportFingerprint = requestFingerprint;
       state.loaded = true;
       populateVariableOptions();
       renderVariableList();
@@ -414,9 +468,44 @@
       if (state.loadController === controller) {
         state.loading = false;
         state.loadController = null;
+        state.loadingFingerprint = null;
         setBusy(false);
       }
     }
+  }
+
+  function currentReportFingerprint() {
+    const receiver = sessionStorage.getItem('receiver') ?? localStorage.getItem('receiver');
+    const streamreceiver = sessionStorage.getItem('streamreceiver')
+      ?? localStorage.getItem('streamreceiver');
+    return core.createReportFingerprint(window.location.href, receiver, streamreceiver);
+  }
+
+  function invalidateReportData() {
+    state.loadController?.abort();
+    state.validationGeneration += 1;
+    state.pendingValidationRender = false;
+    dismissVariablePopover();
+    state.variables = [];
+    state.variablesById = new Map();
+    state.sourceVariables = [];
+    state.sourceVariablesById = new Map();
+    state.dps = [];
+    state.model = null;
+    state.variableValidations.clear();
+    state.validationGraphRuns.clear();
+    state.reportFingerprint = null;
+    state.loaded = false;
+    state.history = core.createNavigationHistory();
+    updateHistoryControls();
+    state.shadow.getElementById('fb-search').value = '';
+    state.shadow.getElementById('fb-variable-list').replaceChildren(
+      element('div', 'fb-sidebar-empty', 'Загрузка…'),
+    );
+    state.shadow.getElementById('fb-content').replaceChildren(
+      element('div', 'fb-empty', 'Загрузка переменных нового отчёта…'),
+    );
+    setStatus('Обнаружен другой отчёт · обновление переменных…', 'neutral');
   }
 
   async function requestJson(command, params, options = {}) {
@@ -557,6 +646,7 @@
             EXPANSION_OPEN_STORAGE_KEY,
             EXPANSION_DEPTH_STORAGE_KEY,
             PARENTHESIS_HIGHLIGHT_STORAGE_KEY,
+            REVALIDATE_OPENED_STORAGE_KEY,
           ]);
           const grouping = stored?.[GROUPING_STORAGE_KEY];
           setVariableGrouping(grouping === 'alphabet' ? 'alphabet' : 'request', false);
@@ -567,16 +657,22 @@
           const depth = core.parseExpansionDepth(stored?.[EXPANSION_DEPTH_STORAGE_KEY]);
           state.expansionDepth = depth.kind === 'invalid' ? { kind: 'unlimited' } : depth;
           state.parenthesisHighlight = stored?.[PARENTHESIS_HIGHLIGHT_STORAGE_KEY] !== false;
+          state.revalidateOpenedVariables = stored?.[REVALIDATE_OPENED_STORAGE_KEY] === true;
         } catch {
           setVariableGrouping('request', false);
           state.zoneMode = 'none';
           state.expansionOpen = false;
           state.expansionDepth = { kind: 'unlimited' };
           state.parenthesisHighlight = true;
+          state.revalidateOpenedVariables = false;
         } finally {
           const parenthesisInput = state.shadow.getElementById('fb-parenthesis-highlight');
           parenthesisInput.checked = state.parenthesisHighlight;
           parenthesisInput.disabled = false;
+          const revalidateInput = state.shadow.getElementById('fb-revalidate-opened');
+          revalidateInput.checked = state.revalidateOpenedVariables;
+          revalidateInput.disabled = false;
+          rebuildActiveVariables();
           state.preferencesLoaded = true;
         }
       })();
@@ -777,6 +873,7 @@
   }
 
   function renderVariable(variableId) {
+    startVariableValidationGraph(variableId);
     const variable = state.variablesById.get(variableId);
     if (!variable) return renderError(`Переменная ${variableId} больше не найдена`);
 
@@ -795,6 +892,8 @@
     );
     const badges = element('div', 'fb-badges');
     badges.append(typeBadge(variable.type), neutralBadge(variable.dataType));
+    const validationBadge = variableValidationBadge(variable.id);
+    if (validationBadge) badges.appendChild(validationBadge);
     heading.append(headingText, badges);
     main.appendChild(card(heading, 'fb-heading-card'));
 
@@ -1657,6 +1756,11 @@
       );
       let firstNewAction = null;
       batch.forEach((id) => {
+        if (state.revalidateOpenedVariables) {
+          void validateOpenedVariable(id).then((result) => {
+            if (result) refreshVariableValidationViews(id);
+          });
+        }
         const card = variablePopoverCard(id);
         if (!card) return;
         if (!firstNewAction) firstNewAction = card.querySelector('.fb-popover-open');
@@ -1707,6 +1811,8 @@
     const variable = state.variablesById.get(id);
     if (!variable) return null;
     const variableCard = element('section', 'fb-popover-card');
+    variableCard.dataset.variableId = String(id);
+    variableCard.__formulaBrowserVariableId = id;
     const variableHeading = element('div', 'fb-popover-variable-heading');
     variableHeading.append(
       typeDot(variable.type),
@@ -1717,6 +1823,8 @@
     appendDefinition(meta, 'Тип', variable.varType || 'Unknown');
     appendDefinition(meta, 'Кардинальность', objectTypeLabel(variable.type));
     appendDefinition(meta, 'Данные', variable.dataType || '—');
+    const validation = variableValidationDescription(id);
+    if (validation) appendDefinition(meta, 'Повторная проверка', validation);
     const sourceInfo = state.model.getDependencySourceInfo(variable.id, { maxNodes: 500 });
     const visibleSources = sourceInfo.sources.slice(0, POPOVER_SOURCE_LIMIT);
     let sourceDescription = visibleSources.length
@@ -1759,6 +1867,12 @@
       anchor.focus();
       state.suppressPopoverFocus = false;
     }
+    if (state.pendingValidationRender) {
+      state.pendingValidationRender = false;
+      queueMicrotask(() => {
+        if (!state.popover) renderCurrent();
+      });
+    }
   }
 
   function appendDefinition(list, term, description) {
@@ -1766,6 +1880,173 @@
       element('dt', '', term),
       element('dd', '', description),
     );
+  }
+
+  function rebuildActiveVariables() {
+    if (!state.sourceVariables.length) return;
+    state.variables = core.selectValidatedVariables(
+      state.sourceVariables,
+      state.variableValidations,
+      state.revalidateOpenedVariables,
+    );
+    state.variablesById = new Map(
+      state.variables.map((variable) => [variable.id, variable]),
+    );
+    state.model = core.createModel(state.variables, state.dps);
+  }
+
+  function validateOpenedVariable(variableId) {
+    if (!state.revalidateOpenedVariables || !state.loaded) return Promise.resolve(null);
+    const existing = state.variableValidations.get(variableId);
+    if (existing) return existing.promise || Promise.resolve(existing);
+    const variable = state.sourceVariablesById.get(variableId);
+    if (!variable || typeof variable.formula !== 'string' || !variable.formula.trim()) {
+      const skipped = { status: 'skipped', message: 'У переменной нет формулы' };
+      state.variableValidations.set(variableId, skipped);
+      return Promise.resolve(skipped);
+    }
+
+    const generation = state.validationGeneration;
+    const pending = { status: 'pending', promise: null };
+    const promise = requestJson('REP.VALIDATE_FORMULA', { formula: variable.formula })
+      .then((response) => {
+        if (generation !== state.validationGeneration) return null;
+        const validatedVariable = core.createValidatedVariable(variable, response);
+        if (!validatedVariable) {
+          const failed = {
+            status: 'error',
+            message: response?.reason || 'Сервер не вернул обновлённое дерево формулы',
+          };
+          state.variableValidations.set(variableId, failed);
+          return failed;
+        }
+        const completed = { status: 'success', variable: validatedVariable };
+        state.variableValidations.set(variableId, completed);
+        rebuildActiveVariables();
+        return completed;
+      })
+      .catch((error) => {
+        if (generation !== state.validationGeneration) return null;
+        const failed = { status: 'error', message: error.message };
+        state.variableValidations.set(variableId, failed);
+        return failed;
+      });
+    pending.promise = promise;
+    state.variableValidations.set(variableId, pending);
+    return promise;
+  }
+
+  function startVariableValidationGraph(rootId) {
+    if (!state.revalidateOpenedVariables || !state.loaded) return;
+    if (state.validationGraphRuns.has(rootId)) return;
+    const generation = state.validationGeneration;
+    const modeRevision = state.validationModeRevision;
+    setStatus('Повторная проверка открытых переменных…', 'neutral');
+    const run = (async () => {
+      const visited = new Set();
+      let frontier = [rootId];
+      let successCount = 0;
+      let fallbackCount = 0;
+      while (
+        frontier.length &&
+        generation === state.validationGeneration &&
+        modeRevision === state.validationModeRevision &&
+        state.revalidateOpenedVariables
+      ) {
+        const batchIds = [];
+        frontier.forEach((id) => {
+          if (visited.has(id)) return;
+          visited.add(id);
+          batchIds.push(id);
+        });
+        frontier = [];
+        for (let index = 0; index < batchIds.length; index += REVALIDATE_CONCURRENCY) {
+          const chunk = batchIds.slice(index, index + REVALIDATE_CONCURRENCY);
+          const results = await Promise.all(chunk.map((id) => validateOpenedVariable(id)));
+          results.forEach((result) => {
+            if (result?.status === 'success') successCount += 1;
+            else fallbackCount += 1;
+          });
+          if (
+            generation !== state.validationGeneration ||
+            modeRevision !== state.validationModeRevision ||
+            !state.revalidateOpenedVariables
+          ) {
+            return false;
+          }
+        }
+        batchIds.forEach((id) => {
+          const variable = state.variablesById.get(id) || state.sourceVariablesById.get(id);
+          if (!variable || variable.varType === 'DP' || variable.varType === 'Merge') return;
+          core.collectReferences(variable.parsedFormula?.root).forEach((reference) => {
+            if (!visited.has(reference.id) && state.sourceVariablesById.has(reference.id)) {
+              frontier.push(reference.id);
+            }
+          });
+        });
+      }
+      if (
+        generation !== state.validationGeneration ||
+        modeRevision !== state.validationModeRevision ||
+        !state.revalidateOpenedVariables
+      ) return false;
+      refreshVariableValidationViews();
+      const fallbackSuffix = fallbackCount
+        ? ` · оставлено исходных: ${fallbackCount}`
+        : '';
+      setStatus(
+        `Обновлено переменных: ${successCount}${fallbackSuffix}`,
+        fallbackCount ? 'warning' : 'success',
+      );
+      return true;
+    })();
+    state.validationGraphRuns.set(rootId, run);
+    const releaseRun = () => {
+      if (state.validationGraphRuns.get(rootId) === run) {
+        state.validationGraphRuns.delete(rootId);
+      }
+    };
+    void run.then(releaseRun, releaseRun);
+  }
+
+  function refreshVariableValidationViews(variableId = null) {
+    if (state.popover) {
+      [...state.popover.querySelectorAll('.fb-popover-card')].forEach((oldCard) => {
+        if (
+          variableId !== null &&
+          oldCard.__formulaBrowserVariableId !== variableId
+        ) return;
+        const hadFocus = oldCard.contains(state.shadow.activeElement);
+        const replacement = variablePopoverCard(oldCard.__formulaBrowserVariableId);
+        if (!replacement) return;
+        oldCard.replaceWith(replacement);
+        if (hadFocus) replacement.querySelector('.fb-popover-open')?.focus();
+      });
+      state.pendingValidationRender = true;
+      return;
+    }
+    state.pendingValidationRender = false;
+    renderCurrent();
+  }
+
+  function variableValidationBadge(variableId) {
+    if (!state.revalidateOpenedVariables) return null;
+    const validation = state.variableValidations.get(variableId);
+    if (!validation || validation.status === 'pending') {
+      return neutralBadge('ПРОВЕРКА…');
+    }
+    if (validation.status === 'success') return successBadge('ОБНОВЛЕНО');
+    const badge = neutralBadge('ИСХОДНОЕ');
+    badge.title = validation.message || 'Повторная проверка не выполнена';
+    return badge;
+  }
+
+  function variableValidationDescription(variableId) {
+    if (!state.revalidateOpenedVariables) return '';
+    const validation = state.variableValidations.get(variableId);
+    if (!validation || validation.status === 'pending') return 'Выполняется…';
+    if (validation.status === 'success') return 'Используется обновлённое дерево';
+    return `Исходные данные · ${validation.message || 'проверка недоступна'}`;
   }
 
   function typeBadge(type) {
@@ -1920,8 +2201,9 @@
       .fb-editor-row .fb-button { align-self: stretch; }
       .fb-editor-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; margin-top: 4px; }
       .fb-shortcuts { color: #8492a6; font-size: 11px; }
-      .fb-parenthesis-control { display: inline-flex; align-items: center; gap: 5px; color: #718096; font-size: 10px; white-space: nowrap; cursor: pointer; }
-      .fb-parenthesis-control input { margin: 0; accent-color: #6483a4; }
+      .fb-preference-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 12px; }
+      .fb-checkbox-control { display: inline-flex; align-items: center; gap: 5px; color: #718096; font-size: 10px; white-space: nowrap; cursor: pointer; }
+      .fb-checkbox-control input { margin: 0; accent-color: #6483a4; }
       .fb-workspace { min-height: 0; display: grid; grid-template-columns: 250px minmax(0, 1fr); }
       .fb-browser-sidebar {
         min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr);

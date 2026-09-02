@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Universal Auth Injector",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "permissions": ["storage", "webNavigation", "tabs"],
   "commands": {
     "open-formula-browser": {

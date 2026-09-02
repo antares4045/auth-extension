@@ -62,6 +62,37 @@
     return { kind: 'limited', value: depth };
   }
 
+  function createValidatedVariable(variable, response) {
+    if (!variable || typeof variable !== 'object') return null;
+    if (response?.result !== 1 || response?.isValid !== 1) return null;
+    if (!response.tree?.root || typeof response.tree.root !== 'object') return null;
+
+    const restoredFormula = [response.restored, response.formula, variable.formula]
+      .find((value) => typeof value === 'string' && value.length > 0);
+
+    return {
+      ...variable,
+      formula: restoredFormula || '',
+      parsedFormula: response.tree,
+    };
+  }
+
+  function createReportFingerprint(url, receiver, streamreceiver) {
+    return JSON.stringify([
+      String(url ?? ''),
+      String(receiver ?? ''),
+      String(streamreceiver ?? ''),
+    ]);
+  }
+
+  function selectValidatedVariables(variables, validationsById, enabled) {
+    const items = Array.isArray(variables) ? variables : [];
+    if (!enabled || !validationsById?.get) return items.slice();
+    return items.map((variable) => (
+      validationsById.get(variable?.id)?.variable || variable
+    ));
+  }
+
   function createNavigationHistory() {
     const visits = [];
     let currentIndex = -1;
@@ -863,8 +894,11 @@
     collectReferences,
     createModel,
     createNavigationHistory,
+    createReportFingerprint,
+    createValidatedVariable,
     parseExpansionDepth,
     normalizeVariableQuery,
+    selectValidatedVariables,
     summarizeSourceNames,
   };
 });

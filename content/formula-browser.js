@@ -896,6 +896,8 @@
     if (validationBadge) badges.appendChild(validationBadge);
     heading.append(headingText, badges);
     main.appendChild(card(heading, 'fb-heading-card'));
+    const validationNotice = variableValidationNotice(variable.id);
+    if (validationNotice) main.appendChild(validationNotice);
 
     main.appendChild(formulaCard(
       'Формула',
@@ -1825,6 +1827,7 @@
     appendDefinition(meta, 'Данные', variable.dataType || '—');
     const validation = variableValidationDescription(id);
     if (validation) appendDefinition(meta, 'Повторная проверка', validation);
+    const validationNotice = variableValidationNotice(id, 'fb-popover-validation-error');
     const sourceInfo = state.model.getDependencySourceInfo(variable.id, { maxNodes: 500 });
     const visibleSources = sourceInfo.sources.slice(0, POPOVER_SOURCE_LIMIT);
     let sourceDescription = visibleSources.length
@@ -1844,7 +1847,12 @@
       dismissVariablePopover();
       navigate({ kind: 'variable', id });
     });
-    variableCard.append(variableHeading, meta, open);
+    variableCard.append(
+      variableHeading,
+      ...(validationNotice ? [validationNotice] : []),
+      meta,
+      open,
+    );
     return variableCard;
   }
 
@@ -2036,7 +2044,12 @@
       return neutralBadge('ПРОВЕРКА…');
     }
     if (validation.status === 'success') return successBadge('ОБНОВЛЕНО');
-    const badge = neutralBadge('ИСХОДНОЕ');
+    if (validation.status === 'error') {
+      const badge = errorBadge('ОШИБКА ПРОВЕРКИ');
+      badge.title = validation.message || 'Повторная проверка завершилась ошибкой';
+      return badge;
+    }
+    const badge = neutralBadge('НЕТ ФОРМУЛЫ');
     badge.title = validation.message || 'Повторная проверка не выполнена';
     return badge;
   }
@@ -2046,7 +2059,23 @@
     const validation = state.variableValidations.get(variableId);
     if (!validation || validation.status === 'pending') return 'Выполняется…';
     if (validation.status === 'success') return 'Используется обновлённое дерево';
+    if (validation.status === 'error') {
+      return `Ошибка · используются исходные данные · ${validation.message || 'причина не указана'}`;
+    }
     return `Исходные данные · ${validation.message || 'проверка недоступна'}`;
+  }
+
+  function variableValidationNotice(variableId, extraClass = '') {
+    if (!state.revalidateOpenedVariables) return null;
+    const validation = state.variableValidations.get(variableId);
+    if (validation?.status !== 'error') return null;
+    const notice = element(
+      'div',
+      `fb-validation-error ${extraClass}`.trim(),
+      `Повторная проверка завершилась ошибкой. Используются исходные данные.\n${truncateText(validation.message || 'Причина не указана', 1000)}`,
+    );
+    notice.setAttribute('role', 'alert');
+    return notice;
   }
 
   function typeBadge(type) {
@@ -2060,6 +2089,10 @@
 
   function successBadge(value) {
     return element('span', 'fb-badge fb-badge-success', value);
+  }
+
+  function errorBadge(value) {
+    return element('span', 'fb-badge fb-badge-error', value);
   }
 
   function typeDot(type) {
@@ -2255,6 +2288,7 @@
       .fb-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 2px 9px; border-radius: 999px; color: #556171; background: #edf1f5; font-size: 11px; font-weight: 650; }
       .fb-badge-neutral { color: #475569; background: #edf1f5; }
       .fb-badge-success { color: #17663c; background: #daf4e5; }
+      .fb-badge-error { color: #a12634; background: #fde4e7; }
       .fb-badge.fb-type-dimension { color: #356b9c; background: #e9f2fa; }
       .fb-badge.fb-type-attribute { color: #477652; background: #edf6ef; }
       .fb-badge.fb-type-measure { color: #8a622d; background: #faf2e7; }
@@ -2335,6 +2369,8 @@
       .fb-expansion summary { color: #255da9; font-weight: 650; cursor: pointer; }
       .fb-expansion-body { display: grid; gap: 8px; margin-top: 10px; }
       .fb-warning { padding: 8px 10px; border-radius: 7px; background: #fff4d8; color: #855d00; }
+      .fb-validation-error { padding: 10px 12px; border: 1px solid #efb6bd; border-radius: 8px; background: #fff1f2; color: #9f2634; white-space: pre-line; overflow-wrap: anywhere; }
+      .fb-popover-validation-error { padding: 8px; font-size: 11px; }
       .fb-source { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 8px 0; border-bottom: 1px solid #edf1f5; }
       .fb-source:last-child { border-bottom: 0; }
       .fb-source strong { overflow-wrap: anywhere; }
